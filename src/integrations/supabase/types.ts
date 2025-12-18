@@ -14,16 +14,250 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      audit_logs: {
+        Row: {
+          action: string
+          created_at: string
+          details: Json | null
+          id: string
+          ip_address: string | null
+          resource_id: string | null
+          resource_type: string
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type: string
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      peer_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by: string | null
+          id: string
+          peer_id: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by?: string | null
+          id?: string
+          peer_id: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by?: string | null
+          id?: string
+          peer_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "peer_assignments_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "wireguard_peers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+          updated_at: string
+          user_id: string
+          username: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+          user_id: string
+          username?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+          user_id?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
+      server_settings: {
+        Row: {
+          description: string | null
+          id: string
+          setting_key: string
+          setting_value: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          setting_key: string
+          setting_value: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          setting_key?: string
+          setting_value?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      traffic_stats: {
+        Row: {
+          id: string
+          peer_id: string
+          recorded_at: string
+          rx_bytes: number
+          tx_bytes: number
+        }
+        Insert: {
+          id?: string
+          peer_id: string
+          recorded_at?: string
+          rx_bytes?: number
+          tx_bytes?: number
+        }
+        Update: {
+          id?: string
+          peer_id?: string
+          recorded_at?: string
+          rx_bytes?: number
+          tx_bytes?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "traffic_stats_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "wireguard_peers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      wireguard_peers: {
+        Row: {
+          allowed_ips: string
+          created_at: string
+          created_by: string | null
+          dns: string | null
+          endpoint: string | null
+          id: string
+          last_handshake: string | null
+          name: string
+          persistent_keepalive: number | null
+          private_key: string | null
+          public_key: string
+          status: string
+          transfer_rx: number | null
+          transfer_tx: number | null
+          updated_at: string
+        }
+        Insert: {
+          allowed_ips?: string
+          created_at?: string
+          created_by?: string | null
+          dns?: string | null
+          endpoint?: string | null
+          id?: string
+          last_handshake?: string | null
+          name: string
+          persistent_keepalive?: number | null
+          private_key?: string | null
+          public_key: string
+          status?: string
+          transfer_rx?: number | null
+          transfer_tx?: number | null
+          updated_at?: string
+        }
+        Update: {
+          allowed_ips?: string
+          created_at?: string
+          created_by?: string | null
+          dns?: string | null
+          endpoint?: string | null
+          id?: string
+          last_handshake?: string | null
+          name?: string
+          persistent_keepalive?: number | null
+          private_key?: string | null
+          public_key?: string
+          status?: string
+          transfer_rx?: number | null
+          transfer_tx?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +384,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
