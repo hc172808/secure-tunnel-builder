@@ -1,4 +1,4 @@
-import { Copy, MoreVertical, Trash2, Settings, Download } from "lucide-react";
+import { Copy, MoreVertical, Trash2, Settings, Download, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import {
@@ -6,6 +6,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
@@ -25,9 +26,11 @@ interface PeerCardProps {
   peer: Peer;
   onDelete?: (id: string) => void;
   onViewConfig?: (id: string) => void;
+  onViewQR?: (id: string) => void;
+  isAdmin?: boolean;
 }
 
-export function PeerCard({ peer, onDelete, onViewConfig }: PeerCardProps) {
+export function PeerCard({ peer, onDelete, onViewConfig, onViewQR, isAdmin = false }: PeerCardProps) {
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} copied to clipboard`);
@@ -58,6 +61,10 @@ export function PeerCard({ peer, onDelete, onViewConfig }: PeerCardProps) {
                 <Settings className="mr-2 h-4 w-4" />
                 View Config
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onViewQR?.(peer.id)} className="cursor-pointer">
+                <QrCode className="mr-2 h-4 w-4" />
+                Show QR Code
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => copyToClipboard(peer.publicKey, "Public key")} className="cursor-pointer">
                 <Copy className="mr-2 h-4 w-4" />
                 Copy Public Key
@@ -66,13 +73,18 @@ export function PeerCard({ peer, onDelete, onViewConfig }: PeerCardProps) {
                 <Download className="mr-2 h-4 w-4" />
                 Download Config
               </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => onDelete?.(peer.id)} 
-                className="cursor-pointer text-destructive focus:text-destructive"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Peer
-              </DropdownMenuItem>
+              {isAdmin && onDelete && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={() => onDelete(peer.id)} 
+                    className="cursor-pointer text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete Peer
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

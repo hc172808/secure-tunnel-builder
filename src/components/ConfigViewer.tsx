@@ -1,4 +1,4 @@
-import { Copy, Download, X } from "lucide-react";
+import { Copy, Download, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,9 +14,10 @@ interface ConfigViewerProps {
   onClose: () => void;
   peerName: string;
   config: string;
+  onViewQR?: () => void;
 }
 
-export function ConfigViewer({ open, onClose, peerName, config }: ConfigViewerProps) {
+export function ConfigViewer({ open, onClose, peerName, config, onViewQR }: ConfigViewerProps) {
   const copyConfig = () => {
     navigator.clipboard.writeText(config);
     toast.success("Configuration copied to clipboard");
@@ -70,6 +71,15 @@ export function ConfigViewer({ open, onClose, peerName, config }: ConfigViewerPr
               <Download className="h-4 w-4" />
             </Button>
           </div>
+        </div>
+
+        <div className="flex gap-2">
+          {onViewQR && (
+            <Button variant="glow" className="flex-1" onClick={onViewQR}>
+              <QrCode className="h-4 w-4 mr-2" />
+              Show QR Code
+            </Button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/20">

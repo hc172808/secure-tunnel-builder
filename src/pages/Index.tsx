@@ -1,15 +1,20 @@
-import { useState } from "react";
-import { Shield, Users, ArrowUpDown, Activity, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, QrCode, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { PeerCard } from "@/components/PeerCard";
 import { AddPeerDialog } from "@/components/AddPeerDialog";
 import { ConfigViewer } from "@/components/ConfigViewer";
+import { QRCodeViewer } from "@/components/QRCodeViewer";
 import { ServerStatus } from "@/components/ServerStatus";
+import { TrafficChart } from "@/components/TrafficChart";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-// Sample data - in real app this would come from API
-const initialPeers = [
+// Sample data for demo - in production this comes from database
+const samplePeers = [
   {
     id: "1",
     name: "MacBook Pro",
@@ -40,21 +45,11 @@ const initialPeers = [
     lastHandshake: "Never",
     status: "pending" as const,
   },
-  {
-    id: "4",
-    name: "Old Laptop",
-    publicKey: "aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3AbC4=",
-    allowedIPs: "10.0.0.5/32",
-    lastHandshake: "3 days ago",
-    transferRx: "12.4 MB",
-    transferTx: "8.1 MB",
-    status: "disconnected" as const,
-  },
 ];
 
-const generateConfig = (peerName: string) => `[Interface]
+const generateConfig = (peerName: string, allowedIPs: string) => `[Interface]
 PrivateKey = <YOUR_PRIVATE_KEY>
-Address = 10.0.0.2/32
+Address = ${allowedIPs}
 DNS = 1.1.1.1, 8.8.8.8
 
 [Peer]
@@ -64,17 +59,31 @@ Endpoint = vpn.example.com:51820
 PersistentKeepalive = 25`;
 
 export default function Index() {
-  const [peers, setPeers] = useState(initialPeers);
+  const navigate = useNavigate();
+  const { user, loading, isAdmin, profile, signOut } = useAuth();
+  const [peers, setPeers] = useState(samplePeers);
+  const [showTrafficChart, setShowTrafficChart] = useState(false);
   const [configViewer, setConfigViewer] = useState<{
     open: boolean;
     peerName: string;
     config: string;
   }>({ open: false, peerName: "", config: "" });
+  const [qrViewer, setQrViewer] = useState<{
+    open: boolean;
+    peerName: string;
+    config: string;
+  }>({ open: false, peerName: "", config: "" });
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/auth");
+    }
+  }, [user, loading, navigate]);
 
   const connectedPeers = peers.filter((p) => p.status === "connected").length;
   const totalTransfer = "2.74 GB";
 
-const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
+  const handleAddPeer = async (newPeer: { name: string; allowedIPs: string }) => {
     const peer = {
       id: Date.now().toString(),
       name: newPeer.name,
@@ -84,10 +93,29 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
       status: "pending" as const,
     };
     setPeers([...peers, peer]);
+    
+    // Log action
+    await supabase.from("audit_logs").insert({
+      user_id: user?.id,
+      action: "CREATE",
+      resource_type: "peer",
+      details: { name: newPeer.name },
+    });
+    
+    toast.success("Peer added successfully");
   };
 
-  const handleDeletePeer = (id: string) => {
+  const handleDeletePeer = async (id: string) => {
     setPeers(peers.filter((p) => p.id !== id));
+    
+    // Log action
+    await supabase.from("audit_logs").insert({
+      user_id: user?.id,
+      action: "DELETE",
+      resource_type: "peer",
+      resource_id: id,
+    });
+    
     toast.success("Peer deleted successfully");
   };
 
@@ -97,7 +125,18 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
       setConfigViewer({
         open: true,
         peerName: peer.name,
-        config: generateConfig(peer.name),
+        config: generateConfig(peer.name, peer.allowedIPs),
+      });
+    }
+  };
+
+  const handleViewQR = (id: string) => {
+    const peer = peers.find((p) => p.id === id);
+    if (peer) {
+      setQrViewer({
+        open: true,
+        peerName: peer.name,
+        config: generateConfig(peer.name, peer.allowedIPs),
       });
     }
   };
@@ -105,6 +144,23 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
   const handleRefresh = () => {
     toast.success("Refreshing peer status...");
   };
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/auth");
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-pulse text-primary">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -123,10 +179,29 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground hidden md:block">
+                {profile?.display_name || user.email}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowTrafficChart(!showTrafficChart)}
+                title="Toggle Traffic Chart"
+              >
+                <BarChart3 className="h-4 w-4" />
+              </Button>
               <Button variant="outline" size="icon" onClick={handleRefresh}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
-              <AddPeerDialog onAddPeer={handleAddPeer} />
+              {isAdmin && (
+                <Button variant="outline" size="icon" onClick={() => navigate("/admin")}>
+                  <Settings className="h-4 w-4" />
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" onClick={handleSignOut}>
+                <LogOut className="h-4 w-4" />
+              </Button>
+              {isAdmin && <AddPeerDialog onAddPeer={handleAddPeer} />}
             </div>
           </div>
         </div>
@@ -163,6 +238,14 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
           />
         </div>
 
+        {/* Traffic Chart */}
+        {showTrafficChart && (
+          <div className="mb-8 gradient-border rounded-xl p-5 animate-fade-in">
+            <h2 className="text-lg font-semibold text-foreground mb-4">Bandwidth Usage (24h)</h2>
+            <TrafficChart />
+          </div>
+        )}
+
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Server Status Panel */}
           <div className="lg:col-span-1 animate-slide-in">
@@ -192,8 +275,10 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
                 >
                   <PeerCard
                     peer={peer}
-                    onDelete={handleDeletePeer}
+                    onDelete={isAdmin ? handleDeletePeer : undefined}
                     onViewConfig={handleViewConfig}
+                    onViewQR={handleViewQR}
+                    isAdmin={isAdmin}
                   />
                 </div>
               ))}
@@ -208,6 +293,22 @@ const handleAddPeer = (newPeer: { name: string; allowedIPs: string }) => {
         onClose={() => setConfigViewer({ ...configViewer, open: false })}
         peerName={configViewer.peerName}
         config={configViewer.config}
+        onViewQR={() => {
+          setConfigViewer({ ...configViewer, open: false });
+          setQrViewer({
+            open: true,
+            peerName: configViewer.peerName,
+            config: configViewer.config,
+          });
+        }}
+      />
+
+      {/* QR Code Viewer Dialog */}
+      <QRCodeViewer
+        open={qrViewer.open}
+        onClose={() => setQrViewer({ ...qrViewer, open: false })}
+        peerName={qrViewer.peerName}
+        config={qrViewer.config}
       />
     </div>
   );
