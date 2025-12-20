@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, UserPlus, Trash2, Crown, Link } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AdminUsers } from "@/components/admin/AdminUsers";
 import { AdminAuditLogs } from "@/components/admin/AdminAuditLogs";
 import { AdminServerSettings } from "@/components/admin/AdminServerSettings";
 import { AdminPeerAssignments } from "@/components/admin/AdminPeerAssignments";
+import { AdminFirewall } from "@/components/admin/AdminFirewall";
+import { AdminDatabaseControls } from "@/components/admin/AdminDatabaseControls";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -64,22 +65,30 @@ export default function Admin() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="users" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-8">
+          <TabsList className="grid w-full grid-cols-6 mb-8">
             <TabsTrigger value="users" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Users
+              <span className="hidden sm:inline">Users</span>
             </TabsTrigger>
             <TabsTrigger value="assignments" className="flex items-center gap-2">
               <Link className="h-4 w-4" />
-              Assignments
+              <span className="hidden sm:inline">Assignments</span>
+            </TabsTrigger>
+            <TabsTrigger value="firewall" className="flex items-center gap-2">
+              <Flame className="h-4 w-4" />
+              <span className="hidden sm:inline">Firewall</span>
+            </TabsTrigger>
+            <TabsTrigger value="database" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              <span className="hidden sm:inline">Database</span>
             </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
-              Settings
+              <span className="hidden sm:inline">Settings</span>
             </TabsTrigger>
             <TabsTrigger value="logs" className="flex items-center gap-2">
               <History className="h-4 w-4" />
-              Audit Logs
+              <span className="hidden sm:inline">Logs</span>
             </TabsTrigger>
           </TabsList>
 
@@ -89,6 +98,14 @@ export default function Admin() {
 
           <TabsContent value="assignments">
             <AdminPeerAssignments />
+          </TabsContent>
+
+          <TabsContent value="firewall">
+            <AdminFirewall />
+          </TabsContent>
+
+          <TabsContent value="database">
+            <AdminDatabaseControls />
           </TabsContent>
 
           <TabsContent value="settings">
