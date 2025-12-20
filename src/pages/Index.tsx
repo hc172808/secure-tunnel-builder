@@ -9,6 +9,7 @@ import { ConfigViewer } from "@/components/ConfigViewer";
 import { QRCodeViewer } from "@/components/QRCodeViewer";
 import { ServerStatus } from "@/components/ServerStatus";
 import { TrafficChart } from "@/components/TrafficChart";
+import { DownloadApps } from "@/components/DownloadApps";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -182,6 +183,10 @@ export default function Index() {
               <span className="text-sm text-muted-foreground hidden md:block">
                 {profile?.display_name || user.email}
               </span>
+              <DownloadApps 
+                peerConfig={configViewer.config} 
+                peerName={configViewer.peerName} 
+              />
               <Button
                 variant="outline"
                 size="icon"

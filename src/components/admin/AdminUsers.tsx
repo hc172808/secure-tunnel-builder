@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Crown, Trash2, UserPlus, Shield } from "lucide-react";
+import { Crown, Trash2, Shield, Power, PowerOff, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/hooks/useAuth";
 
 interface UserWithRole {
   id: string;
@@ -30,14 +31,17 @@ interface UserWithRole {
   display_name: string | null;
   created_at: string;
   role: "admin" | "user";
+  is_disabled: boolean;
 }
 
 export function AdminUsers() {
+  const { user } = useAuth();
   const [users, setUsers] = useState<UserWithRole[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; userId: string | null }>({
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; userId: string | null; displayName: string }>({
     open: false,
     userId: null,
+    displayName: "",
   });
 
   useEffect(() => {
@@ -49,7 +53,7 @@ export function AdminUsers() {
     
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, user_id, username, display_name, created_at");
+      .select("id, user_id, username, display_name, created_at, is_disabled");
 
     if (profilesError) {
       toast.error("Failed to fetch users");
@@ -67,11 +71,12 @@ export function AdminUsers() {
       return;
     }
 
-    const usersWithRoles = profiles.map((profile) => {
+    const usersWithRoles = profiles.map((profile: any) => {
       const userRole = roles.find((r) => r.user_id === profile.user_id);
       return {
         ...profile,
         role: (userRole?.role || "user") as "admin" | "user",
+        is_disabled: profile.is_disabled || false,
       };
     });
 
@@ -83,7 +88,6 @@ export function AdminUsers() {
     const newRole = currentRole === "admin" ? "user" : "admin";
     
     if (currentRole === "admin") {
-      // Remove admin role
       const { error } = await supabase
         .from("user_roles")
         .delete()
@@ -95,7 +99,6 @@ export function AdminUsers() {
         return;
       }
     } else {
-      // Add admin role
       const { error } = await supabase
         .from("user_roles")
         .insert({ user_id: userId, role: "admin" });
@@ -106,8 +109,8 @@ export function AdminUsers() {
       }
     }
 
-    // Log action
     await supabase.from("audit_logs").insert({
+      user_id: user?.id,
       action: newRole === "admin" ? "GRANT_ADMIN" : "REVOKE_ADMIN",
       resource_type: "user_role",
       resource_id: userId,
@@ -116,6 +119,58 @@ export function AdminUsers() {
 
     toast.success(`User role updated to ${newRole}`);
     fetchUsers();
+  };
+
+  const toggleUserStatus = async (targetUser: UserWithRole) => {
+    const newStatus = !targetUser.is_disabled;
+    
+    const { error } = await supabase
+      .from("profiles")
+      .update({ is_disabled: newStatus } as any)
+      .eq("user_id", targetUser.user_id);
+
+    if (error) {
+      toast.error("Failed to update user status");
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      user_id: user?.id,
+      action: newStatus ? "DISABLE_USER" : "ENABLE_USER",
+      resource_type: "user",
+      resource_id: targetUser.user_id,
+      details: { display_name: targetUser.display_name },
+    });
+
+    toast.success(newStatus ? "User disabled" : "User enabled");
+    fetchUsers();
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteDialog.userId) return;
+
+    // Note: Full user deletion requires admin API access
+    // For now, we'll just disable the user
+    const { error } = await supabase
+      .from("profiles")
+      .update({ is_disabled: true } as any)
+      .eq("user_id", deleteDialog.userId);
+
+    if (error) {
+      toast.error("Failed to remove user");
+    } else {
+      await supabase.from("audit_logs").insert({
+        user_id: user?.id,
+        action: "DELETE_USER",
+        resource_type: "user",
+        resource_id: deleteDialog.userId,
+        details: { display_name: deleteDialog.displayName },
+      });
+      toast.success("User has been disabled");
+      fetchUsers();
+    }
+
+    setDeleteDialog({ open: false, userId: null, displayName: "" });
   };
 
   if (loading) {
@@ -134,7 +189,7 @@ export function AdminUsers() {
         <div>
           <h2 className="text-lg font-semibold text-foreground">User Management</h2>
           <p className="text-sm text-muted-foreground">
-            Manage user accounts and permissions
+            Manage user accounts, roles, and access
           </p>
         </div>
       </div>
@@ -146,56 +201,77 @@ export function AdminUsers() {
               <TableHead className="text-muted-foreground">User</TableHead>
               <TableHead className="text-muted-foreground">Username</TableHead>
               <TableHead className="text-muted-foreground">Role</TableHead>
+              <TableHead className="text-muted-foreground">Status</TableHead>
               <TableHead className="text-muted-foreground">Joined</TableHead>
               <TableHead className="text-muted-foreground text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {users.map((user) => (
-              <TableRow key={user.id} className="border-border">
+            {users.map((u) => (
+              <TableRow key={u.id} className={`border-border ${u.is_disabled ? "opacity-50" : ""}`}>
                 <TableCell className="font-medium text-foreground">
                   <div className="flex items-center gap-3">
                     <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
                       <span className="text-primary text-sm font-bold">
-                        {(user.display_name || user.username || "U").charAt(0).toUpperCase()}
+                        {(u.display_name || u.username || "U").charAt(0).toUpperCase()}
                       </span>
                     </div>
-                    {user.display_name || "Unknown"}
+                    {u.display_name || "Unknown"}
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground font-mono">
-                  @{user.username || "—"}
+                  @{u.username || "—"}
                 </TableCell>
                 <TableCell>
                   <Badge
-                    variant={user.role === "admin" ? "default" : "secondary"}
+                    variant={u.role === "admin" ? "default" : "secondary"}
                     className="flex items-center gap-1 w-fit"
                   >
-                    {user.role === "admin" && <Crown className="h-3 w-3" />}
-                    {user.role}
+                    {u.role === "admin" && <Crown className="h-3 w-3" />}
+                    {u.role}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={u.is_disabled ? "destructive" : "outline"}>
+                    {u.is_disabled ? "Disabled" : "Active"}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {new Date(user.created_at).toLocaleDateString()}
+                  {new Date(u.created_at).toLocaleDateString()}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => toggleAdminRole(user.user_id, user.role)}
-                  >
-                    {user.role === "admin" ? (
-                      <>
-                        <Shield className="h-4 w-4 mr-1" />
-                        Remove Admin
-                      </>
-                    ) : (
-                      <>
-                        <Crown className="h-4 w-4 mr-1" />
-                        Make Admin
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => toggleUserStatus(u)}
+                      title={u.is_disabled ? "Enable User" : "Disable User"}
+                    >
+                      {u.is_disabled ? (
+                        <Power className="h-4 w-4 text-success" />
+                      ) : (
+                        <PowerOff className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleAdminRole(u.user_id, u.role)}
+                    >
+                      {u.role === "admin" ? (
+                        <Shield className="h-4 w-4" />
+                      ) : (
+                        <Crown className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setDeleteDialog({ open: true, userId: u.user_id, displayName: u.display_name || "" })}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -208,6 +284,23 @@ export function AdminUsers() {
           No users found
         </div>
       )}
+
+      <AlertDialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove User</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove this user? They will be disabled and unable to access the system.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteUser} className="bg-destructive text-destructive-foreground">
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
