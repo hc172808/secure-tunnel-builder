@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, QrCode, BarChart3 } from "lucide-react";
+import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { PeerCard } from "@/components/PeerCard";
@@ -14,55 +14,59 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-// Sample data for demo - in production this comes from database
-const samplePeers = [
-  {
-    id: "1",
-    name: "MacBook Pro",
-    publicKey: "xTIBA5rboUvnH4htodjb60Y7YAf21J7YQMlNGC8HQ14=",
-    allowedIPs: "10.0.0.2/32",
-    endpoint: "192.168.1.100:51820",
-    lastHandshake: "2 minutes ago",
-    transferRx: "1.2 GB",
-    transferTx: "856 MB",
-    status: "connected" as const,
-  },
-  {
-    id: "2",
-    name: "iPhone 15",
-    publicKey: "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=",
-    allowedIPs: "10.0.0.3/32",
-    endpoint: "192.168.1.101:51820",
-    lastHandshake: "5 minutes ago",
-    transferRx: "456 MB",
-    transferTx: "234 MB",
-    status: "connected" as const,
-  },
-  {
-    id: "3",
-    name: "Home Server",
-    publicKey: "pVYWqT8c7wH9P5X3Q0M2kJNLzRoGsYuFbKdE1iAhVn4=",
-    allowedIPs: "10.0.0.4/32",
-    lastHandshake: "Never",
-    status: "pending" as const,
-  },
-];
+interface WireGuardPeer {
+  id: string;
+  name: string;
+  public_key: string;
+  private_key?: string;
+  allowed_ips: string;
+  endpoint?: string;
+  dns: string;
+  status: "connected" | "disconnected" | "pending";
+  last_handshake?: string;
+  transfer_rx: number;
+  transfer_tx: number;
+  created_at: string;
+}
 
-const generateConfig = (peerName: string, allowedIPs: string) => `[Interface]
-PrivateKey = <YOUR_PRIVATE_KEY>
-Address = ${allowedIPs}
-DNS = 1.1.1.1, 8.8.8.8
+interface ServerSettings {
+  is_running: boolean;
+  public_key: string;
+  endpoint: string;
+  listen_port: number;
+  uptime: string;
+}
+
+const formatBytes = (bytes: number): string => {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+};
+
+const generateConfig = (peer: WireGuardPeer, serverPublicKey: string, serverEndpoint: string) => `[Interface]
+PrivateKey = ${peer.private_key || "<YOUR_PRIVATE_KEY>"}
+Address = ${peer.allowed_ips}
+DNS = ${peer.dns || "1.1.1.1"}
 
 [Peer]
-PublicKey = sWoS+tBxn5gJ0E+RYhI6L1M2vX4dFnP8qT7zKaJmHk0=
+PublicKey = ${serverPublicKey}
 AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = vpn.example.com:51820
+Endpoint = ${serverEndpoint}:51820
 PersistentKeepalive = 25`;
 
 export default function Index() {
   const navigate = useNavigate();
   const { user, loading, isAdmin, profile, signOut } = useAuth();
-  const [peers, setPeers] = useState(samplePeers);
+  const [peers, setPeers] = useState<WireGuardPeer[]>([]);
+  const [serverSettings, setServerSettings] = useState<ServerSettings>({
+    is_running: false,
+    public_key: "",
+    endpoint: "",
+    listen_port: 51820,
+    uptime: "0d 0h 0m",
+  });
   const [showTrafficChart, setShowTrafficChart] = useState(false);
   const [configViewer, setConfigViewer] = useState<{
     open: boolean;
@@ -74,6 +78,108 @@ export default function Index() {
     peerName: string;
     config: string;
   }>({ open: false, peerName: "", config: "" });
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch peers from database
+  const fetchPeers = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("wireguard_peers")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      
+      if (data) {
+        setPeers(data.map((peer) => ({
+          id: peer.id,
+          name: peer.name,
+          public_key: peer.public_key,
+          private_key: peer.private_key,
+          allowed_ips: peer.allowed_ips || "10.0.0.0/24",
+          endpoint: peer.endpoint,
+          dns: peer.dns || "1.1.1.1",
+          status: (peer.status as "connected" | "disconnected" | "pending") || "disconnected",
+          last_handshake: peer.last_handshake,
+          transfer_rx: peer.transfer_rx || 0,
+          transfer_tx: peer.transfer_tx || 0,
+          created_at: peer.created_at,
+        })));
+      }
+    } catch (error) {
+      console.error("Error fetching peers:", error);
+    }
+  }, []);
+
+  // Fetch server settings
+  const fetchServerSettings = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("server_settings")
+        .select("setting_key, setting_value");
+
+      if (error) throw error;
+
+      if (data) {
+        const settings: Partial<ServerSettings> = {};
+        data.forEach((row) => {
+          if (row.setting_key === "is_running") settings.is_running = row.setting_value === "true";
+          if (row.setting_key === "public_key") settings.public_key = row.setting_value;
+          if (row.setting_key === "endpoint") settings.endpoint = row.setting_value;
+          if (row.setting_key === "listen_port") settings.listen_port = parseInt(row.setting_value) || 51820;
+          if (row.setting_key === "uptime") settings.uptime = row.setting_value;
+        });
+        setServerSettings((prev) => ({ ...prev, ...settings }));
+      }
+    } catch (error) {
+      console.error("Error fetching server settings:", error);
+    }
+  }, []);
+
+  // Initial data fetch
+  useEffect(() => {
+    if (user) {
+      fetchPeers();
+      fetchServerSettings();
+    }
+  }, [user, fetchPeers, fetchServerSettings]);
+
+  // Real-time subscription for peer updates
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel("wireguard-peers-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "wireguard_peers",
+        },
+        (payload) => {
+          console.log("Peer update received:", payload);
+          fetchPeers();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "server_settings",
+        },
+        (payload) => {
+          console.log("Server settings update received:", payload);
+          fetchServerSettings();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, fetchPeers, fetchServerSettings]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -82,42 +188,52 @@ export default function Index() {
   }, [user, loading, navigate]);
 
   const connectedPeers = peers.filter((p) => p.status === "connected").length;
-  const totalTransfer = "2.74 GB";
+  const totalTransferRx = peers.reduce((acc, p) => acc + (p.transfer_rx || 0), 0);
+  const totalTransferTx = peers.reduce((acc, p) => acc + (p.transfer_tx || 0), 0);
+  const totalTransfer = formatBytes(totalTransferRx + totalTransferTx);
 
   const handleAddPeer = async (newPeer: { name: string; allowedIPs: string }) => {
-    const peer = {
-      id: Date.now().toString(),
-      name: newPeer.name,
-      publicKey: btoa(Math.random().toString()).slice(0, 44) + "=",
-      allowedIPs: newPeer.allowedIPs + "/32",
-      lastHandshake: undefined,
-      status: "pending" as const,
-    };
-    setPeers([...peers, peer]);
-    
-    // Log action
-    await supabase.from("audit_logs").insert({
-      user_id: user?.id,
-      action: "CREATE",
-      resource_type: "peer",
-      details: { name: newPeer.name },
-    });
-    
-    toast.success("Peer added successfully");
+    try {
+      const { error } = await supabase.from("wireguard_peers").insert({
+        name: newPeer.name,
+        public_key: btoa(Math.random().toString()).slice(0, 44) + "=",
+        allowed_ips: newPeer.allowedIPs + "/32",
+        status: "pending",
+      });
+      
+      if (error) throw error;
+      
+      await supabase.from("audit_logs").insert({
+        user_id: user?.id,
+        action: "CREATE",
+        resource_type: "peer",
+        details: { name: newPeer.name },
+      });
+      
+      toast.success("Peer added successfully");
+      fetchPeers();
+    } catch (error) {
+      toast.error("Failed to add peer");
+    }
   };
 
   const handleDeletePeer = async (id: string) => {
-    setPeers(peers.filter((p) => p.id !== id));
-    
-    // Log action
-    await supabase.from("audit_logs").insert({
-      user_id: user?.id,
-      action: "DELETE",
-      resource_type: "peer",
-      resource_id: id,
-    });
-    
-    toast.success("Peer deleted successfully");
+    try {
+      const { error } = await supabase.from("wireguard_peers").delete().eq("id", id);
+      if (error) throw error;
+      
+      await supabase.from("audit_logs").insert({
+        user_id: user?.id,
+        action: "DELETE",
+        resource_type: "peer",
+        resource_id: id,
+      });
+      
+      toast.success("Peer deleted successfully");
+      fetchPeers();
+    } catch (error) {
+      toast.error("Failed to delete peer");
+    }
   };
 
   const handleViewConfig = (id: string) => {
@@ -126,7 +242,7 @@ export default function Index() {
       setConfigViewer({
         open: true,
         peerName: peer.name,
-        config: generateConfig(peer.name, peer.allowedIPs),
+        config: generateConfig(peer, serverSettings.public_key, serverSettings.endpoint),
       });
     }
   };
@@ -137,13 +253,16 @@ export default function Index() {
       setQrViewer({
         open: true,
         peerName: peer.name,
-        config: generateConfig(peer.name, peer.allowedIPs),
+        config: generateConfig(peer, serverSettings.public_key, serverSettings.endpoint),
       });
     }
   };
 
-  const handleRefresh = () => {
-    toast.success("Refreshing peer status...");
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([fetchPeers(), fetchServerSettings()]);
+    setRefreshing(false);
+    toast.success("Peer status refreshed");
   };
 
   const handleSignOut = async () => {
@@ -279,7 +398,17 @@ export default function Index() {
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
                   <PeerCard
-                    peer={peer}
+                    peer={{
+                      id: peer.id,
+                      name: peer.name,
+                      publicKey: peer.public_key,
+                      allowedIPs: peer.allowed_ips,
+                      endpoint: peer.endpoint,
+                      lastHandshake: peer.last_handshake,
+                      transferRx: formatBytes(peer.transfer_rx),
+                      transferTx: formatBytes(peer.transfer_tx),
+                      status: peer.status,
+                    }}
                     onDelete={isAdmin ? handleDeletePeer : undefined}
                     onViewConfig={handleViewConfig}
                     onViewQR={handleViewQR}
