@@ -4,6 +4,7 @@
 # WireGuard VPN Server Installation Script
 # For Ubuntu 22.04 LTS
 # Includes: WireGuard, PostgreSQL, API Sync Service
+# With GitHub Updates and Web UI Integration
 #######################################
 
 set -e
@@ -13,6 +14,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
@@ -26,6 +28,8 @@ SERVICE_NAME="wg-api-sync"
 INSTALL_DIR="/opt/wireguard-manager"
 BACKUP_DIR="/var/backups/wireguard"
 CONFIG_FILE="${INSTALL_DIR}/config.env"
+WEB_DIR="/var/www/wireguard-dashboard"
+GITHUB_REPO=""
 
 print_header() {
     echo -e "\n${BLUE}========================================${NC}"
@@ -43,6 +47,10 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}✗ $1${NC}"
+}
+
+print_info() {
+    echo -e "${CYAN}ℹ $1${NC}"
 }
 
 check_root() {
@@ -78,7 +86,13 @@ install_dependencies() {
         cron \
         ufw \
         net-tools \
-        iptables-persistent
+        iptables-persistent \
+        nginx \
+        certbot \
+        python3-certbot-nginx \
+        git \
+        nodejs \
+        npm
     
     print_success "Dependencies installed"
 }
@@ -108,21 +122,26 @@ EOF
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- App role enum
-CREATE TYPE app_role AS ENUM ('admin', 'user');
+DO \$\$ BEGIN
+    CREATE TYPE app_role AS ENUM ('admin', 'user');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END \$\$;
 
 -- Profiles table
-CREATE TABLE profiles (
+CREATE TABLE IF NOT EXISTS profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL UNIQUE,
     username TEXT,
     display_name TEXT,
     avatar_url TEXT,
+    is_disabled BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- User roles table
-CREATE TABLE user_roles (
+CREATE TABLE IF NOT EXISTS user_roles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL,
     role app_role DEFAULT 'user',
@@ -131,7 +150,7 @@ CREATE TABLE user_roles (
 );
 
 -- WireGuard peers table
-CREATE TABLE wireguard_peers (
+CREATE TABLE IF NOT EXISTS wireguard_peers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     public_key TEXT NOT NULL UNIQUE,
@@ -150,7 +169,7 @@ CREATE TABLE wireguard_peers (
 );
 
 -- Server settings table
-CREATE TABLE server_settings (
+CREATE TABLE IF NOT EXISTS server_settings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     setting_key TEXT NOT NULL UNIQUE,
     setting_value TEXT NOT NULL,
@@ -160,7 +179,7 @@ CREATE TABLE server_settings (
 );
 
 -- Peer assignments table
-CREATE TABLE peer_assignments (
+CREATE TABLE IF NOT EXISTS peer_assignments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL,
     peer_id UUID NOT NULL REFERENCES wireguard_peers(id) ON DELETE CASCADE,
@@ -170,7 +189,7 @@ CREATE TABLE peer_assignments (
 );
 
 -- Traffic stats table
-CREATE TABLE traffic_stats (
+CREATE TABLE IF NOT EXISTS traffic_stats (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     peer_id UUID NOT NULL REFERENCES wireguard_peers(id) ON DELETE CASCADE,
     rx_bytes BIGINT DEFAULT 0,
@@ -179,7 +198,7 @@ CREATE TABLE traffic_stats (
 );
 
 -- Audit logs table
-CREATE TABLE audit_logs (
+CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID,
     action TEXT NOT NULL,
@@ -188,6 +207,23 @@ CREATE TABLE audit_logs (
     details JSONB,
     ip_address TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Firewall rules table
+CREATE TABLE IF NOT EXISTS firewall_rules (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    source_ip TEXT,
+    destination_ip TEXT,
+    protocol TEXT DEFAULT 'any',
+    port TEXT,
+    action TEXT DEFAULT 'allow',
+    priority INTEGER DEFAULT 100,
+    enabled BOOLEAN DEFAULT TRUE,
+    description TEXT,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Grant permissions
@@ -199,7 +235,7 @@ EOF
 }
 
 setup_wireguard() {
-    print_header "Setting Up WireGuard"
+    print_header "Setting Up WireGuard (wg0)"
     
     PUBLIC_IP=$(get_public_ip)
     
@@ -209,6 +245,8 @@ setup_wireguard() {
     
     # Create WireGuard configuration
     mkdir -p /etc/wireguard
+    
+    DEFAULT_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -1)
     
     cat > /etc/wireguard/${WG_INTERFACE}.conf <<EOF
 [Interface]
@@ -220,11 +258,11 @@ PrivateKey = ${WG_PRIVATE_KEY}
 PostUp = sysctl -w net.ipv4.ip_forward=1
 PostUp = iptables -A FORWARD -i %i -j ACCEPT
 PostUp = iptables -A FORWARD -o %i -j ACCEPT
-PostUp = iptables -t nat -A POSTROUTING -o $(ip route | grep default | awk '{print $5}') -j MASQUERADE
+PostUp = iptables -t nat -A POSTROUTING -o ${DEFAULT_INTERFACE} -j MASQUERADE
 
 PostDown = iptables -D FORWARD -i %i -j ACCEPT
 PostDown = iptables -D FORWARD -o %i -j ACCEPT
-PostDown = iptables -t nat -D POSTROUTING -o $(ip route | grep default | awk '{print $5}') -j MASQUERADE
+PostDown = iptables -t nat -D POSTROUTING -o ${DEFAULT_INTERFACE} -j MASQUERADE
 
 # Peers will be added dynamically
 EOF
@@ -232,7 +270,9 @@ EOF
     chmod 600 /etc/wireguard/${WG_INTERFACE}.conf
     
     # Enable IP forwarding permanently
-    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+    if ! grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf; then
+        echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+    fi
     sysctl -p
     
     # Enable and start WireGuard
@@ -242,9 +282,11 @@ EOF
     # Configure firewall
     ufw allow ${WG_PORT}/udp
     ufw allow 22/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
     ufw --force enable
     
-    print_success "WireGuard configured on ${PUBLIC_IP}:${WG_PORT}"
+    print_success "WireGuard (wg0) configured on ${PUBLIC_IP}:${WG_PORT}"
     echo "Public Key: ${WG_PUBLIC_KEY}"
 }
 
@@ -349,7 +391,11 @@ echo "$peers" | jq -c '.[]' | while read peer; do
     
     status="disconnected"
     if [ "$lh" != "0" ] && [ "$lh" != "null" ]; then
-        status="connected"
+        current_time=$(date +%s)
+        time_diff=$((current_time - lh))
+        if [ $time_diff -lt 180 ]; then
+            status="connected"
+        fi
         lh_ts=$(date -d "@$lh" '+%Y-%m-%d %H:%M:%S%z' 2>/dev/null || echo "")
     else
         lh_ts=""
@@ -444,6 +490,15 @@ PersistentKeepalive = 25"
     echo ""
     echo "QR Code:"
     echo "$client_config" | qrencode -t ansiutf8
+    
+    # Save config to file
+    mkdir -p ${INSTALL_DIR}/configs
+    echo "$client_config" > "${INSTALL_DIR}/configs/${name}.conf"
+    echo "$client_config" | qrencode -o "${INSTALL_DIR}/configs/${name}.png"
+    
+    echo ""
+    echo "Config saved to: ${INSTALL_DIR}/configs/${name}.conf"
+    echo "QR code saved to: ${INSTALL_DIR}/configs/${name}.png"
 }
 
 remove_peer() {
@@ -468,6 +523,10 @@ remove_peer() {
         DELETE FROM wireguard_peers WHERE name = '${name}';
     "
     
+    # Remove config files
+    rm -f "${INSTALL_DIR}/configs/${name}.conf"
+    rm -f "${INSTALL_DIR}/configs/${name}.png"
+    
     echo "Peer removed: ${name}"
 }
 
@@ -481,6 +540,26 @@ list_peers() {
         FROM wireguard_peers
         ORDER BY created_at;
     "
+}
+
+show_config() {
+    local name=$1
+    if [ -f "${INSTALL_DIR}/configs/${name}.conf" ]; then
+        cat "${INSTALL_DIR}/configs/${name}.conf"
+    else
+        echo "Config not found for peer: ${name}"
+        exit 1
+    fi
+}
+
+show_qr() {
+    local name=$1
+    if [ -f "${INSTALL_DIR}/configs/${name}.conf" ]; then
+        cat "${INSTALL_DIR}/configs/${name}.conf" | qrencode -t ansiutf8
+    else
+        echo "Config not found for peer: ${name}"
+        exit 1
+    fi
 }
 
 case $ACTION in
@@ -501,8 +580,22 @@ case $ACTION in
     list)
         list_peers
         ;;
+    config)
+        if [ -z "$PEER_NAME" ]; then
+            echo "Usage: $0 config <peer_name>"
+            exit 1
+        fi
+        show_config "$PEER_NAME"
+        ;;
+    qr)
+        if [ -z "$PEER_NAME" ]; then
+            echo "Usage: $0 qr <peer_name>"
+            exit 1
+        fi
+        show_qr "$PEER_NAME"
+        ;;
     *)
-        echo "Usage: $0 {add|remove|list} [peer_name]"
+        echo "Usage: $0 {add|remove|list|config|qr} [peer_name]"
         exit 1
         ;;
 esac
@@ -529,17 +622,23 @@ pg_dump -h localhost -U ${DB_USER} -d ${DB_NAME} > ${BACKUP_DIR}/database_${TIME
 # Copy WireGuard config
 cp /etc/wireguard/wg0.conf ${BACKUP_DIR}/wg0_${TIMESTAMP}.conf
 
+# Copy peer configs
+mkdir -p ${BACKUP_DIR}/configs_${TIMESTAMP}
+cp -r /opt/wireguard-manager/configs/* ${BACKUP_DIR}/configs_${TIMESTAMP}/ 2>/dev/null || true
+
 # Create archive
 tar -czf ${BACKUP_FILE} \
     -C ${BACKUP_DIR} \
     database_${TIMESTAMP}.sql \
     wg0_${TIMESTAMP}.conf \
+    configs_${TIMESTAMP} \
     -C /opt/wireguard-manager \
     config.env
 
 # Cleanup temp files
 rm -f ${BACKUP_DIR}/database_${TIMESTAMP}.sql
 rm -f ${BACKUP_DIR}/wg0_${TIMESTAMP}.conf
+rm -rf ${BACKUP_DIR}/configs_${TIMESTAMP}
 
 # Keep only last 7 backups
 ls -t ${BACKUP_DIR}/backup_*.tar.gz | tail -n +8 | xargs -r rm
@@ -608,6 +707,14 @@ if [ -n "$wg_file" ]; then
     echo "WireGuard config restored"
 fi
 
+# Restore peer configs
+configs_dir=$(ls -d ${RESTORE_DIR}/configs_* 2>/dev/null | head -1)
+if [ -n "$configs_dir" ]; then
+    mkdir -p /opt/wireguard-manager/configs
+    cp -r ${configs_dir}/* /opt/wireguard-manager/configs/
+    echo "Peer configs restored"
+fi
+
 # Restore config.env if present
 if [ -f "${RESTORE_DIR}/config.env" ]; then
     cp "${RESTORE_DIR}/config.env" /opt/wireguard-manager/config.env
@@ -620,10 +727,70 @@ rm -rf ${RESTORE_DIR}
 # Start WireGuard
 systemctl start wg-quick@wg0
 
-echo "Restore completed!"
+echo "Restore completed! Redirecting to dashboard..."
 RESTOREEOF
     
     chmod +x ${INSTALL_DIR}/restore.sh
+    
+    # Create update script for GitHub
+    cat > ${INSTALL_DIR}/update.sh <<'UPDATEEOF'
+#!/bin/bash
+
+source /opt/wireguard-manager/config.env
+
+print_status() {
+    echo -e "\033[0;34m[*] $1\033[0m"
+}
+
+print_success() {
+    echo -e "\033[0;32m[✓] $1\033[0m"
+}
+
+print_error() {
+    echo -e "\033[0;31m[✗] $1\033[0m"
+}
+
+if [ -z "${GITHUB_REPO}" ]; then
+    print_error "GitHub repository not configured"
+    echo "Set GITHUB_REPO in ${CONFIG_FILE}"
+    exit 1
+fi
+
+WEB_DIR="/var/www/wireguard-dashboard"
+
+print_status "Creating backup before update..."
+/opt/wireguard-manager/backup.sh
+
+print_status "Pulling latest changes from GitHub..."
+cd ${WEB_DIR}
+
+if [ -d ".git" ]; then
+    git fetch origin
+    git reset --hard origin/main
+else
+    print_error "Not a git repository. Cloning fresh..."
+    cd /var/www
+    rm -rf wireguard-dashboard
+    git clone ${GITHUB_REPO} wireguard-dashboard
+    cd wireguard-dashboard
+fi
+
+print_status "Installing dependencies..."
+npm install
+
+print_status "Building application..."
+npm run build
+
+print_status "Restarting services..."
+systemctl restart nginx
+
+print_success "Update completed!"
+echo ""
+echo "Dashboard updated to latest version from GitHub"
+echo "Visit your dashboard to see the changes"
+UPDATEEOF
+    
+    chmod +x ${INSTALL_DIR}/update.sh
     
     # Create systemd service for sync
     cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
@@ -692,9 +859,16 @@ CLOUD_SYNC_ENABLED="false"
 CLOUD_API_URL=""
 SERVER_TOKEN="${SERVER_TOKEN}"
 
+# GitHub Repository (for updates)
+GITHUB_REPO=""
+
 # Backup
 BACKUP_DIR="${BACKUP_DIR}"
 BACKUP_RETENTION_DAYS="7"
+
+# Web Dashboard
+WEB_DIR="/var/www/wireguard-dashboard"
+DASHBOARD_PORT="80"
 EOF
     
     chmod 600 ${CONFIG_FILE}
@@ -710,6 +884,7 @@ create_cli_wrapper() {
     ln -sf ${INSTALL_DIR}/backup.sh /usr/local/bin/wg-backup
     ln -sf ${INSTALL_DIR}/restore.sh /usr/local/bin/wg-restore
     ln -sf ${INSTALL_DIR}/sync.sh /usr/local/bin/wg-sync
+    ln -sf ${INSTALL_DIR}/update.sh /usr/local/bin/wg-update
     
     # Create main management script
     cat > /usr/local/bin/wg-manager <<'CLIEOF'
@@ -720,27 +895,32 @@ CONFIG_FILE="/opt/wireguard-manager/config.env"
 show_status() {
     source ${CONFIG_FILE}
     
-    echo "WireGuard Server Status"
-    echo "======================="
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              WireGuard Server Status                         ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
     
     if systemctl is-active --quiet wg-quick@wg0; then
-        echo "Status: RUNNING"
+        echo "║  Status:      ✅ RUNNING                                     ║"
     else
-        echo "Status: STOPPED"
+        echo "║  Status:      ❌ STOPPED                                     ║"
     fi
     
-    echo "Public IP: ${SERVER_ENDPOINT}"
-    echo "Port: ${WG_PORT}"
-    echo "Public Key: $(wg show wg0 public-key 2>/dev/null || echo 'N/A')"
-    echo ""
-    echo "Cloud Sync: ${CLOUD_SYNC_ENABLED}"
+    echo "║  Public IP:   ${SERVER_ENDPOINT}                             "
+    echo "║  Port:        ${WG_PORT}                                     "
+    echo "║  Public Key:  $(wg show wg0 public-key 2>/dev/null | head -c 20)...        "
+    echo "║  Interface:   wg0                                            "
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Cloud Sync:  ${CLOUD_SYNC_ENABLED}                          "
     if [ "${CLOUD_SYNC_ENABLED}" = "true" ]; then
-        echo "Cloud API: ${CLOUD_API_URL}"
+        echo "║  Cloud API:   ${CLOUD_API_URL}                           "
     fi
-    echo ""
-    echo "Database: ${DB_NAME}"
+    echo "║  Database:    ${DB_NAME}                                     "
+    echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
+    echo "Connected Peers:"
+    echo "────────────────"
     wg-peer list
 }
 
@@ -764,6 +944,12 @@ disable_cloud() {
     echo "Cloud sync disabled. Using local database only."
 }
 
+set_github_repo() {
+    read -p "Enter GitHub repository URL: " repo_url
+    sed -i "s|GITHUB_REPO=.*|GITHUB_REPO=\"${repo_url}\"|" ${CONFIG_FILE}
+    echo "GitHub repository set to: ${repo_url}"
+}
+
 case $1 in
     status)
         show_status
@@ -782,11 +968,17 @@ case $1 in
     sync)
         wg-sync
         ;;
+    update)
+        wg-update
+        ;;
     enable-cloud)
         enable_cloud
         ;;
     disable-cloud)
         disable_cloud
+        ;;
+    set-github)
+        set_github_repo
         ;;
     start)
         systemctl start wg-quick@wg0
@@ -800,31 +992,124 @@ case $1 in
         systemctl restart wg-quick@wg0
         echo "WireGuard restarted"
         ;;
+    logs)
+        tail -f /var/log/wg-sync.log
+        ;;
     *)
-        echo "WireGuard Manager"
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════╗"
+        echo "║                   WireGuard Manager                          ║"
+        echo "╚══════════════════════════════════════════════════════════════╝"
         echo ""
         echo "Usage: wg-manager <command>"
         echo ""
-        echo "Commands:"
-        echo "  status          Show server status and peers"
-        echo "  peer add <name> Add a new peer"
-        echo "  peer remove <n> Remove a peer"
-        echo "  peer list       List all peers"
-        echo "  backup          Create backup"
-        echo "  restore <file>  Restore from backup"
-        echo "  sync            Force sync status"
-        echo "  enable-cloud    Enable cloud synchronization"
-        echo "  disable-cloud   Disable cloud synchronization"
-        echo "  start           Start WireGuard"
-        echo "  stop            Stop WireGuard"
-        echo "  restart         Restart WireGuard"
+        echo "Server Commands:"
+        echo "  status            Show server status and peers"
+        echo "  start             Start WireGuard"
+        echo "  stop              Stop WireGuard"
+        echo "  restart           Restart WireGuard"
+        echo "  logs              View sync logs"
+        echo ""
+        echo "Peer Commands:"
+        echo "  peer add <name>   Add a new peer"
+        echo "  peer remove <n>   Remove a peer"
+        echo "  peer list         List all peers"
+        echo "  peer config <n>   Show peer config"
+        echo "  peer qr <name>    Show peer QR code"
+        echo ""
+        echo "Backup Commands:"
+        echo "  backup            Create backup"
+        echo "  restore <file>    Restore from backup"
+        echo ""
+        echo "Sync Commands:"
+        echo "  sync              Force sync status"
+        echo "  update            Pull updates from GitHub"
+        echo "  enable-cloud      Enable cloud synchronization"
+        echo "  disable-cloud     Disable cloud synchronization"
+        echo "  set-github        Set GitHub repository for updates"
+        echo ""
         ;;
 esac
 CLIEOF
     
     chmod +x /usr/local/bin/wg-manager
     
-    print_success "CLI commands installed: wg-manager, wg-peer, wg-backup, wg-restore"
+    print_success "CLI commands installed: wg-manager, wg-peer, wg-backup, wg-restore, wg-update"
+}
+
+setup_nginx() {
+    print_header "Setting Up Nginx Web Server"
+    
+    mkdir -p ${WEB_DIR}
+    
+    # Create nginx config
+    cat > /etc/nginx/sites-available/wireguard-dashboard <<'NGINXEOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    
+    root /var/www/wireguard-dashboard/dist;
+    index index.html;
+    
+    server_name _;
+    
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    
+    location /api/ {
+        proxy_pass http://localhost:3001/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Serve peer configs
+    location /configs/ {
+        alias /opt/wireguard-manager/configs/;
+        autoindex off;
+    }
+}
+NGINXEOF
+    
+    # Enable site
+    ln -sf /etc/nginx/sites-available/wireguard-dashboard /etc/nginx/sites-enabled/
+    rm -f /etc/nginx/sites-enabled/default
+    
+    # Test and restart nginx
+    nginx -t
+    systemctl restart nginx
+    systemctl enable nginx
+    
+    print_success "Nginx configured"
+}
+
+create_admin_user() {
+    print_header "Creating Admin User"
+    
+    read -p "Enter admin email: " admin_email
+    read -s -p "Enter admin password: " admin_password
+    echo ""
+    read -p "Enter admin display name: " admin_name
+    
+    # Hash password (simple hash for local auth - in production use proper auth)
+    password_hash=$(echo -n "${admin_password}" | sha256sum | cut -d' ' -f1)
+    
+    export PGPASSWORD="${DB_PASSWORD}"
+    admin_id=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        INSERT INTO profiles (user_id, username, display_name)
+        VALUES (uuid_generate_v4(), '${admin_email}', '${admin_name}')
+        RETURNING user_id;
+    " | tr -d ' ')
+    
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        INSERT INTO user_roles (user_id, role)
+        VALUES ('${admin_id}', 'admin');
+    "
+    
+    print_success "Admin user created: ${admin_email}"
 }
 
 print_summary() {
@@ -832,31 +1117,41 @@ print_summary() {
     
     print_header "Installation Complete!"
     
-    echo -e "${GREEN}WireGuard VPN Server is now running!${NC}"
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║         WireGuard VPN Server is now running!                 ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo "Server Details:"
-    echo "  Endpoint: ${SERVER_ENDPOINT}:${WG_PORT}"
-    echo "  Public Key: $(wg show wg0 public-key)"
-    echo "  Network: ${WG_NETWORK}"
+    echo "  ├─ Endpoint: ${SERVER_ENDPOINT}:${WG_PORT}"
+    echo "  ├─ Public Key: $(wg show wg0 public-key)"
+    echo "  ├─ Network: ${WG_NETWORK}"
+    echo "  └─ Interface: wg0"
     echo ""
     echo "Database:"
-    echo "  Name: ${DB_NAME}"
-    echo "  User: ${DB_USER}"
-    echo "  Password: ${DB_PASSWORD}"
+    echo "  ├─ Name: ${DB_NAME}"
+    echo "  ├─ User: ${DB_USER}"
+    echo "  └─ Password: ${DB_PASSWORD}"
     echo ""
     echo "Server Token (for cloud sync): ${SERVER_TOKEN}"
     echo ""
     echo "Quick Commands:"
-    echo "  wg-manager status        - Show server status"
-    echo "  wg-manager peer add NAME - Add new peer"
-    echo "  wg-manager peer list     - List all peers"
-    echo "  wg-manager backup        - Create backup"
-    echo "  wg-manager enable-cloud  - Enable cloud sync"
+    echo "  ├─ wg-manager status        - Show server status"
+    echo "  ├─ wg-manager peer add NAME - Add new peer"
+    echo "  ├─ wg-manager peer list     - List all peers"
+    echo "  ├─ wg-manager backup        - Create backup"
+    echo "  ├─ wg-manager restore FILE  - Restore from backup"
+    echo "  ├─ wg-manager update        - Pull updates from GitHub"
+    echo "  ├─ wg-manager enable-cloud  - Enable cloud sync"
+    echo "  └─ wg-manager set-github    - Set GitHub repo for updates"
     echo ""
     echo "Config file: ${CONFIG_FILE}"
     echo "Backups: ${BACKUP_DIR}"
+    echo "Peer configs: ${INSTALL_DIR}/configs/"
     echo ""
-    print_warning "Save the database password and server token securely!"
+    echo -e "${YELLOW}⚠ Save the database password and server token securely!${NC}"
+    echo ""
+    echo "To access the dashboard, visit: http://${SERVER_ENDPOINT}"
+    echo ""
 }
 
 # Main installation
@@ -871,6 +1166,13 @@ main() {
     create_config
     create_api_sync_service
     create_cli_wrapper
+    setup_nginx
+    
+    echo ""
+    read -p "Would you like to create an admin user now? (yes/no): " create_admin
+    if [ "$create_admin" = "yes" ]; then
+        create_admin_user
+    fi
     
     print_summary
 }
