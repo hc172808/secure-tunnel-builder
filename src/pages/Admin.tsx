@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
@@ -11,6 +11,7 @@ import { AdminServerSettings } from "@/components/admin/AdminServerSettings";
 import { AdminPeerAssignments } from "@/components/admin/AdminPeerAssignments";
 import { AdminFirewall } from "@/components/admin/AdminFirewall";
 import { AdminDatabaseControls } from "@/components/admin/AdminDatabaseControls";
+import { AdminConsole } from "@/components/admin/AdminConsole";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -65,7 +66,7 @@ export default function Admin() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="users" className="w-full">
-          <TabsList className="grid w-full grid-cols-6 mb-8">
+          <TabsList className="grid w-full grid-cols-7 mb-8">
             <TabsTrigger value="users" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               <span className="hidden sm:inline">Users</span>
@@ -81,6 +82,10 @@ export default function Admin() {
             <TabsTrigger value="database" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
               <span className="hidden sm:inline">Database</span>
+            </TabsTrigger>
+            <TabsTrigger value="console" className="flex items-center gap-2">
+              <Terminal className="h-4 w-4" />
+              <span className="hidden sm:inline">Console</span>
             </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
@@ -106,6 +111,10 @@ export default function Admin() {
 
           <TabsContent value="database">
             <AdminDatabaseControls />
+          </TabsContent>
+
+          <TabsContent value="console">
+            <AdminConsole />
           </TabsContent>
 
           <TabsContent value="settings">
