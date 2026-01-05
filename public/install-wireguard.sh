@@ -995,6 +995,9 @@ case $1 in
     logs)
         tail -f /var/log/wg-sync.log
         ;;
+    ssl)
+        setup_ssl_cli
+        ;;
     *)
         echo ""
         echo "╔══════════════════════════════════════════════════════════════╗"
@@ -1026,10 +1029,110 @@ case $1 in
         echo "  update            Pull updates from GitHub"
         echo "  enable-cloud      Enable cloud synchronization"
         echo "  disable-cloud     Disable cloud synchronization"
-        echo "  set-github        Set GitHub repository for updates"
+        echo "  set-github        Set GitHub repo for updates"
+        echo ""
+        echo "SSL Commands:"
+        echo "  ssl               Setup SSL/HTTPS with Let's Encrypt"
         echo ""
         ;;
 esac
+
+setup_ssl_cli() {
+    source ${CONFIG_FILE} 2>/dev/null || true
+    
+    read -p "Enter your domain name (e.g., vpn.example.com): " DOMAIN_NAME
+    read -p "Enter your email for SSL notifications: " SSL_EMAIL
+    
+    if [ -z "$DOMAIN_NAME" ] || [ -z "$SSL_EMAIL" ]; then
+        echo "Domain and email are required for SSL setup."
+        exit 1
+    fi
+    
+    # Update nginx config
+    cat > /etc/nginx/sites-available/wireguard-dashboard <<SSLEOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN_NAME};
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN_NAME};
+    
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
+    
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    
+    root /var/www/wireguard-dashboard/dist;
+    index index.html;
+    
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+    
+    location /api/ {
+        proxy_pass http://localhost:3001/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+    }
+    
+    location /configs/ {
+        alias /opt/wireguard-manager/configs/;
+        autoindex off;
+    }
+}
+SSLEOF
+
+    mkdir -p /var/www/html
+    nginx -t && systemctl reload nginx
+    
+    echo "Obtaining SSL certificate..."
+    certbot certonly --webroot -w /var/www/html -d ${DOMAIN_NAME} --email ${SSL_EMAIL} --agree-tos --non-interactive
+    
+    if [ $? -eq 0 ]; then
+        nginx -t && systemctl reload nginx
+        sed -i "s|SERVER_ENDPOINT=.*|SERVER_ENDPOINT=\"${DOMAIN_NAME}\"|" ${CONFIG_FILE} 2>/dev/null || true
+        
+        # Setup auto-renewal
+        echo "0 3 * * * root certbot renew --quiet --post-hook 'systemctl reload nginx'" > /etc/cron.d/certbot-renew
+        
+        echo ""
+        echo "✅ SSL certificate installed successfully!"
+        echo "Dashboard: https://${DOMAIN_NAME}"
+        echo "Auto-renewal is configured."
+    else
+        echo "❌ Failed to obtain SSL certificate"
+        echo "Make sure your domain DNS points to this server's IP"
+    fi
+}
 CLIEOF
     
     chmod +x /usr/local/bin/wg-manager
@@ -1084,6 +1187,148 @@ NGINXEOF
     systemctl enable nginx
     
     print_success "Nginx configured"
+}
+
+setup_ssl() {
+    print_header "Setting Up SSL/HTTPS with Let's Encrypt"
+    
+    read -p "Enter your domain name (e.g., vpn.example.com): " DOMAIN_NAME
+    read -p "Enter your email for SSL certificate notifications: " SSL_EMAIL
+    
+    if [ -z "$DOMAIN_NAME" ] || [ -z "$SSL_EMAIL" ]; then
+        print_warning "Domain or email not provided. Skipping SSL setup."
+        print_info "You can run 'wg-manager ssl' later to configure SSL."
+        return
+    fi
+    
+    # Update nginx config with domain
+    cat > /etc/nginx/sites-available/wireguard-dashboard <<NGINXSSLEOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN_NAME};
+    
+    # Redirect HTTP to HTTPS
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+    
+    # Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN_NAME};
+    
+    # SSL certificates (will be added by certbot)
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
+    
+    # SSL settings
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+    
+    # Modern SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    
+    # HSTS
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    resolver_timeout 5s;
+    
+    root /var/www/wireguard-dashboard/dist;
+    index index.html;
+    
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+    
+    location /api/ {
+        proxy_pass http://localhost:3001/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+    }
+    
+    # Serve peer configs (with auth)
+    location /configs/ {
+        alias /opt/wireguard-manager/configs/;
+        autoindex off;
+    }
+}
+NGINXSSLEOF
+
+    # Create a temporary HTTP-only config for certbot
+    cat > /etc/nginx/sites-available/wireguard-temp <<TEMPEOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN_NAME};
+    
+    root /var/www/html;
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
+}
+TEMPEOF
+
+    # Use temp config for initial certbot
+    ln -sf /etc/nginx/sites-available/wireguard-temp /etc/nginx/sites-enabled/wireguard-dashboard
+    nginx -t && systemctl reload nginx
+    
+    # Obtain SSL certificate
+    print_info "Obtaining SSL certificate from Let's Encrypt..."
+    certbot certonly --webroot -w /var/www/html -d ${DOMAIN_NAME} --email ${SSL_EMAIL} --agree-tos --non-interactive
+    
+    if [ $? -eq 0 ]; then
+        # Switch to SSL config
+        ln -sf /etc/nginx/sites-available/wireguard-dashboard /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-available/wireguard-temp
+        nginx -t && systemctl reload nginx
+        
+        # Update config with domain
+        sed -i "s|SERVER_ENDPOINT=.*|SERVER_ENDPOINT=\"${DOMAIN_NAME}\"|" ${CONFIG_FILE}
+        
+        # Setup auto-renewal cron
+        cat > /etc/cron.d/certbot-renew <<'CRONEOF'
+0 3 * * * root certbot renew --quiet --post-hook "systemctl reload nginx"
+CRONEOF
+        
+        print_success "SSL certificate installed successfully!"
+        print_info "Dashboard: https://${DOMAIN_NAME}"
+        print_info "Certificate auto-renewal is configured."
+    else
+        print_error "Failed to obtain SSL certificate"
+        print_info "Make sure your domain points to this server's IP address"
+        print_info "You can retry with: wg-manager ssl"
+        
+        # Restore HTTP config
+        ln -sf /etc/nginx/sites-available/wireguard-dashboard /etc/nginx/sites-enabled/
+        rm -f /etc/nginx/sites-available/wireguard-temp
+    fi
+    
+    nginx -t && systemctl reload nginx
 }
 
 create_admin_user() {
@@ -1142,7 +1387,8 @@ print_summary() {
     echo "  ├─ wg-manager restore FILE  - Restore from backup"
     echo "  ├─ wg-manager update        - Pull updates from GitHub"
     echo "  ├─ wg-manager enable-cloud  - Enable cloud sync"
-    echo "  └─ wg-manager set-github    - Set GitHub repo for updates"
+    echo "  ├─ wg-manager set-github    - Set GitHub repo for updates"
+    echo "  └─ wg-manager ssl           - Setup SSL/HTTPS with Let's Encrypt"
     echo ""
     echo "Config file: ${CONFIG_FILE}"
     echo "Backups: ${BACKUP_DIR}"
@@ -1151,6 +1397,7 @@ print_summary() {
     echo -e "${YELLOW}⚠ Save the database password and server token securely!${NC}"
     echo ""
     echo "To access the dashboard, visit: http://${SERVER_ENDPOINT}"
+    echo "To enable HTTPS, run: wg-manager ssl"
     echo ""
 }
 
@@ -1172,6 +1419,12 @@ main() {
     read -p "Would you like to create an admin user now? (yes/no): " create_admin
     if [ "$create_admin" = "yes" ]; then
         create_admin_user
+    fi
+    
+    echo ""
+    read -p "Would you like to setup SSL/HTTPS with Let's Encrypt? (yes/no): " setup_ssl_choice
+    if [ "$setup_ssl_choice" = "yes" ]; then
+        setup_ssl
     fi
     
     print_summary
