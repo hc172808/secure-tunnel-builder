@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Settings, Save, RefreshCw } from "lucide-react";
+import { Settings, Save, RefreshCw, UserPlus, UserMinus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -85,6 +86,31 @@ export function AdminServerSettings() {
     listen_port: "Listen Port",
     interface_address: "Interface Address",
     dns_servers: "DNS Servers",
+    signup_enabled: "Allow New User Signups",
+  };
+
+  const toggleSignup = async () => {
+    const currentValue = editedValues["signup_enabled"] === "true";
+    const newValue = !currentValue ? "true" : "false";
+    
+    const { error } = await supabase
+      .from("server_settings")
+      .update({ setting_value: newValue })
+      .eq("setting_key", "signup_enabled");
+
+    if (error) {
+      toast.error("Failed to toggle signup");
+      return;
+    }
+
+    await supabase.from("audit_logs").insert({
+      action: "UPDATE",
+      resource_type: "server_setting",
+      details: { key: "signup_enabled", old_value: currentValue ? "true" : "false", new_value: newValue },
+    });
+
+    setEditedValues((prev) => ({ ...prev, signup_enabled: newValue }));
+    toast.success(newValue === "true" ? "Signups enabled" : "Signups disabled");
   };
 
   if (loading) {
@@ -118,8 +144,35 @@ export function AdminServerSettings() {
         </div>
       </div>
 
+      {/* Signup Toggle Card */}
+      <div className="gradient-border rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {editedValues["signup_enabled"] === "true" ? (
+              <UserPlus className="h-5 w-5 text-success" />
+            ) : (
+              <UserMinus className="h-5 w-5 text-destructive" />
+            )}
+            <div>
+              <Label className="text-foreground font-medium">
+                Allow New User Signups
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {editedValues["signup_enabled"] === "true"
+                  ? "New users can register accounts"
+                  : "Only admins can create new accounts"}
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={editedValues["signup_enabled"] === "true"}
+            onCheckedChange={toggleSignup}
+          />
+        </div>
+      </div>
+
       <div className="grid gap-6 md:grid-cols-2">
-        {settings.map((setting) => (
+        {settings.filter(s => s.setting_key !== "signup_enabled").map((setting) => (
           <div key={setting.id} className="gradient-border rounded-xl p-4 space-y-3">
             <div>
               <Label htmlFor={setting.setting_key} className="text-foreground">
