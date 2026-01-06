@@ -47,6 +47,36 @@ export type Database = {
         }
         Relationships: []
       }
+      invitations: {
+        Row: {
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string | null
+          token: string
+          used_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          invited_by?: string | null
+          token?: string
+          used_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string | null
+          token?: string
+          used_at?: string | null
+        }
+        Relationships: []
+      }
       peer_assignments: {
         Row: {
           assigned_at: string
@@ -79,8 +109,72 @@ export type Database = {
           },
         ]
       }
+      peer_notifications: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          peer_id: string | null
+          peer_name: string
+          read: boolean
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          peer_id?: string | null
+          peer_name: string
+          read?: boolean
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          peer_id?: string | null
+          peer_name?: string
+          read?: boolean
+        }
+        Relationships: []
+      }
+      pending_peer_requests: {
+        Row: {
+          allowed_ips: string
+          approved_by: string | null
+          created_at: string
+          id: string
+          name: string
+          public_key: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allowed_ips?: string
+          approved_by?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          public_key?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allowed_ips?: string
+          approved_by?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          public_key?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
+          api_token: string | null
           avatar_url: string | null
           created_at: string
           display_name: string | null
@@ -90,6 +184,7 @@ export type Database = {
           username: string | null
         }
         Insert: {
+          api_token?: string | null
           avatar_url?: string | null
           created_at?: string
           display_name?: string | null
@@ -99,6 +194,7 @@ export type Database = {
           username?: string | null
         }
         Update: {
+          api_token?: string | null
           avatar_url?: string | null
           created_at?: string
           display_name?: string | null
