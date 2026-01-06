@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
-import { Crown, Trash2, Shield, Power, PowerOff, UserPlus } from "lucide-react";
+import { Crown, Trash2, Shield, Power, PowerOff, UserPlus, Mail, Lock, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -21,6 +23,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -43,6 +54,9 @@ export function AdminUsers() {
     userId: null,
     displayName: "",
   });
+  const [addUserDialog, setAddUserDialog] = useState(false);
+  const [newUser, setNewUser] = useState({ email: "", password: "", username: "", displayName: "" });
+  const [addingUser, setAddingUser] = useState(false);
 
   useEffect(() => {
     fetchUsers();
@@ -173,6 +187,58 @@ export function AdminUsers() {
     setDeleteDialog({ open: false, userId: null, displayName: "" });
   };
 
+  const handleAddUser = async () => {
+    if (!newUser.email || !newUser.password || !newUser.username || !newUser.displayName) {
+      toast.error("All fields are required");
+      return;
+    }
+    
+    setAddingUser(true);
+    
+    // Create user via admin API - this creates the auth user
+    const { data, error } = await supabase.auth.signUp({
+      email: newUser.email,
+      password: newUser.password,
+      options: {
+        data: {
+          username: newUser.username,
+          display_name: newUser.displayName,
+        },
+        emailRedirectTo: `${window.location.origin}/`,
+      },
+    });
+
+    if (error) {
+      toast.error(error.message);
+      setAddingUser(false);
+      return;
+    }
+
+    if (data.user) {
+      // Create profile
+      await supabase.from("profiles").insert({
+        user_id: data.user.id,
+        username: newUser.username,
+        display_name: newUser.displayName,
+      });
+
+      await supabase.from("audit_logs").insert({
+        user_id: user?.id,
+        action: "CREATE_USER",
+        resource_type: "user",
+        resource_id: data.user.id,
+        details: { email: newUser.email, username: newUser.username },
+      });
+
+      toast.success("User created successfully");
+      fetchUsers();
+    }
+
+    setAddingUser(false);
+    setAddUserDialog(false);
+    setNewUser({ email: "", password: "", username: "", displayName: "" });
+  };
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -192,6 +258,84 @@ export function AdminUsers() {
             Manage user accounts, roles, and access
           </p>
         </div>
+        <Dialog open={addUserDialog} onOpenChange={setAddUserDialog}>
+          <DialogTrigger asChild>
+            <Button variant="glow" size="sm">
+              <UserPlus className="h-4 w-4 mr-2" />
+              Add User
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add New User</DialogTitle>
+              <DialogDescription>
+                Create a new user account
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="new-username">Username</Label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="new-username"
+                      placeholder="johndoe"
+                      className="pl-10"
+                      value={newUser.username}
+                      onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-displayname">Display Name</Label>
+                  <Input
+                    id="new-displayname"
+                    placeholder="John Doe"
+                    value={newUser.displayName}
+                    onChange={(e) => setNewUser({ ...newUser, displayName: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-email">Email</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="new-email"
+                    type="email"
+                    placeholder="user@example.com"
+                    className="pl-10"
+                    value={newUser.email}
+                    onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-password">Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="new-password"
+                    type="password"
+                    placeholder="••••••••"
+                    className="pl-10"
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAddUserDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleAddUser} disabled={addingUser}>
+                {addingUser ? "Creating..." : "Create User"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="gradient-border rounded-xl overflow-hidden">

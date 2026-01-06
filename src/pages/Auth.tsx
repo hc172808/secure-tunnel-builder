@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { z } from "zod";
 import { ForgotPassword } from "@/components/ForgotPassword";
@@ -27,12 +28,29 @@ export default function Auth() {
   const { user, loading, signIn, signUp } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [signupEnabled, setSignupEnabled] = useState(true);
   const [formData, setFormData] = useState({
     email: "",
     password: "",
     username: "",
     displayName: "",
   });
+
+  // Check if signup is enabled
+  useEffect(() => {
+    const checkSignupEnabled = async () => {
+      const { data } = await supabase
+        .from("server_settings")
+        .select("setting_value")
+        .eq("setting_key", "signup_enabled")
+        .single();
+      
+      if (data) {
+        setSignupEnabled(data.setting_value === "true");
+      }
+    };
+    checkSignupEnabled();
+  }, []);
 
   useEffect(() => {
     if (!loading && user) {
@@ -71,6 +89,12 @@ export default function Auth() {
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!signupEnabled) {
+      toast.error("Signups are currently disabled by the administrator");
+      return;
+    }
+    
     setIsLoading(true);
 
     const result = signupSchema.safeParse(formData);
@@ -125,9 +149,9 @@ export default function Auth() {
 
         <div className="gradient-border rounded-xl p-6">
           <Tabs defaultValue="login" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsList className={`grid w-full mb-6 ${signupEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
               <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              {signupEnabled && <TabsTrigger value="signup">Sign Up</TabsTrigger>}
             </TabsList>
 
             <TabsContent value="login">

@@ -325,7 +325,7 @@ export default function Index() {
               <Button variant="ghost" size="icon" onClick={handleSignOut}>
                 <LogOut className="h-4 w-4" />
               </Button>
-              {isAdmin && <AddPeerDialog onAddPeer={handleAddPeer} />}
+              <AddPeerDialog onAddPeer={handleAddPeer} />
             </div>
           </div>
         </div>
