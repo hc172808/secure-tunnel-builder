@@ -10,6 +10,8 @@ import { QRCodeViewer } from "@/components/QRCodeViewer";
 import { ServerStatus } from "@/components/ServerStatus";
 import { TrafficChart } from "@/components/TrafficChart";
 import { DownloadApps } from "@/components/DownloadApps";
+import { ChangePassword } from "@/components/ChangePassword";
+import { ApiTokenViewer } from "@/components/ApiTokenViewer";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -306,6 +308,8 @@ export default function Index() {
                 peerConfig={configViewer.config} 
                 peerName={configViewer.peerName} 
               />
+              <ApiTokenViewer />
+              <ChangePassword />
               <Button
                 variant="outline"
                 size="icon"

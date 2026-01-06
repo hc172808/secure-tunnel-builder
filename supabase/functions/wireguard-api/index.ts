@@ -426,6 +426,56 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Peer request via API token (for scripts)
+    if (path === '/peer-request' && method === 'POST') {
+      const apiToken = req.headers.get('x-api-token')
+      
+      if (!apiToken) {
+        return new Response(JSON.stringify({ error: 'API token required' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+
+      // Find user by API token
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('user_id')
+        .eq('api_token', apiToken)
+        .single()
+
+      if (!profile) {
+        return new Response(JSON.stringify({ error: 'Invalid API token' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+
+      const body = await req.json()
+
+      const { data, error } = await supabase
+        .from('pending_peer_requests')
+        .insert({
+          user_id: profile.user_id,
+          name: body.name,
+          public_key: body.public_key,
+          allowed_ips: body.allowed_ips || '10.0.0.0/24',
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: 'Peer request submitted. Waiting for admin approval.',
+        request_id: data.id 
+      }), {
+        status: 201,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

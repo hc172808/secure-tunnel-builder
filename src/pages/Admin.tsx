@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
@@ -12,6 +12,9 @@ import { AdminPeerAssignments } from "@/components/admin/AdminPeerAssignments";
 import { AdminFirewall } from "@/components/admin/AdminFirewall";
 import { AdminDatabaseControls } from "@/components/admin/AdminDatabaseControls";
 import { AdminConsole } from "@/components/admin/AdminConsole";
+import { AdminInvitations } from "@/components/admin/AdminInvitations";
+import { AdminPeerRequests } from "@/components/admin/AdminPeerRequests";
+import { PeerNotifications } from "@/components/admin/PeerNotifications";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -60,16 +63,25 @@ export default function Admin() {
                 </div>
               </div>
             </div>
+            <PeerNotifications />
           </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="users" className="w-full">
-          <TabsList className="grid w-full grid-cols-7 mb-8">
+          <TabsList className="flex flex-wrap w-full gap-1 mb-8">
             <TabsTrigger value="users" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
               <span className="hidden sm:inline">Users</span>
+            </TabsTrigger>
+            <TabsTrigger value="invitations" className="flex items-center gap-2">
+              <Mail className="h-4 w-4" />
+              <span className="hidden sm:inline">Invites</span>
+            </TabsTrigger>
+            <TabsTrigger value="peer-requests" className="flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              <span className="hidden sm:inline">Requests</span>
             </TabsTrigger>
             <TabsTrigger value="assignments" className="flex items-center gap-2">
               <Link className="h-4 w-4" />
@@ -99,6 +111,14 @@ export default function Admin() {
 
           <TabsContent value="users">
             <AdminUsers />
+          </TabsContent>
+
+          <TabsContent value="invitations">
+            <AdminInvitations />
+          </TabsContent>
+
+          <TabsContent value="peer-requests">
+            <AdminPeerRequests />
           </TabsContent>
 
           <TabsContent value="assignments">
