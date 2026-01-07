@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3 } from "lucide-react";
+import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { PeerCard } from "@/components/PeerCard";
@@ -12,6 +12,7 @@ import { TrafficChart } from "@/components/TrafficChart";
 import { DownloadApps } from "@/components/DownloadApps";
 import { ChangePassword } from "@/components/ChangePassword";
 import { ApiTokenViewer } from "@/components/ApiTokenViewer";
+import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -304,6 +305,7 @@ export default function Index() {
               <span className="text-sm text-muted-foreground hidden md:block">
                 {profile?.display_name || user.email}
               </span>
+              <ConnectionStatusIndicator />
               <DownloadApps 
                 peerConfig={configViewer.config} 
                 peerName={configViewer.peerName} 
@@ -320,6 +322,9 @@ export default function Index() {
               </Button>
               <Button variant="outline" size="icon" onClick={handleRefresh}>
                 <RefreshCw className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => navigate("/settings")} title="Settings">
+                <Cog className="h-4 w-4" />
               </Button>
               {isAdmin && (
                 <Button variant="outline" size="icon" onClick={() => navigate("/admin")}>
