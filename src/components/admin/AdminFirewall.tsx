@@ -70,16 +70,22 @@ export function AdminFirewall() {
 
   const fetchRules = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("firewall_rules" as any)
-      .select("*")
-      .order("priority", { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from("firewall_rules")
+        .select("*")
+        .order("priority", { ascending: true });
 
-    if (error) {
-      toast.error("Failed to fetch firewall rules");
+      if (error) {
+        console.error("Firewall fetch error:", error);
+        toast.error("Failed to fetch firewall rules");
+        setRules([]);
+      } else {
+        setRules((data as FirewallRule[]) || []);
+      }
+    } catch (err) {
+      console.error("Firewall fetch exception:", err);
       setRules([]);
-    } else {
-      setRules((data as unknown as FirewallRule[]) || []);
     }
     setLoading(false);
   };
@@ -104,8 +110,8 @@ export function AdminFirewall() {
 
     if (editingRule) {
       const { error } = await supabase
-        .from("firewall_rules" as any)
-        .update(ruleData as any)
+        .from("firewall_rules")
+        .update(ruleData)
         .eq("id", editingRule.id);
 
       if (error) {
@@ -122,8 +128,8 @@ export function AdminFirewall() {
       }
     } else {
       const { error } = await supabase
-        .from("firewall_rules" as any)
-        .insert(ruleData as any);
+        .from("firewall_rules")
+        .insert(ruleData);
 
       if (error) {
         toast.error("Failed to create rule");
@@ -145,7 +151,7 @@ export function AdminFirewall() {
 
   const handleDelete = async (rule: FirewallRule) => {
     const { error } = await supabase
-      .from("firewall_rules" as any)
+      .from("firewall_rules")
       .delete()
       .eq("id", rule.id);
 
@@ -166,8 +172,8 @@ export function AdminFirewall() {
 
   const toggleRule = async (rule: FirewallRule) => {
     const { error } = await supabase
-      .from("firewall_rules" as any)
-      .update({ enabled: !rule.enabled } as any)
+      .from("firewall_rules")
+      .update({ enabled: !rule.enabled })
       .eq("id", rule.id);
 
     if (error) {

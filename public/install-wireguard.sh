@@ -998,6 +998,9 @@ case $1 in
     ssl)
         setup_ssl_cli
         ;;
+    frontend)
+        generate_frontend_config
+        ;;
     *)
         echo ""
         echo "╔══════════════════════════════════════════════════════════════╗"
@@ -1031,11 +1034,70 @@ case $1 in
         echo "  disable-cloud     Disable cloud synchronization"
         echo "  set-github        Set GitHub repo for updates"
         echo ""
-        echo "SSL Commands:"
+        echo "Configuration Commands:"
         echo "  ssl               Setup SSL/HTTPS with Let's Encrypt"
+        echo "  frontend          Generate frontend connection configuration"
         echo ""
         ;;
 esac
+
+generate_frontend_config() {
+    source ${CONFIG_FILE} 2>/dev/null || {
+        echo "Configuration not found. Run installation first."
+        exit 1
+    }
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Frontend Database Configuration                 ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Add these to your frontend .env file:"
+    echo ""
+    echo "# Local PostgreSQL Database Connection"
+    echo "VITE_LOCAL_DB_HOST=${SERVER_ENDPOINT}"
+    echo "VITE_LOCAL_DB_PORT=5432"
+    echo "VITE_LOCAL_DB_NAME=${DB_NAME}"
+    echo "VITE_LOCAL_DB_USER=${DB_USER}"
+    echo "VITE_LOCAL_DB_PASSWORD=${DB_PASSWORD}"
+    echo ""
+    echo "# Server API"
+    echo "VITE_SERVER_API_URL=http://${SERVER_ENDPOINT}/api"
+    echo "VITE_SERVER_TOKEN=${SERVER_TOKEN}"
+    echo ""
+    echo "# WireGuard Server"
+    echo "VITE_WG_ENDPOINT=${SERVER_ENDPOINT}:${WG_PORT}"
+    echo "VITE_WG_PUBLIC_KEY=${WG_PUBLIC_KEY}"
+    echo ""
+    
+    # Also create a downloadable .env file
+    ENV_FILE="${INSTALL_DIR}/frontend.env"
+    cat > ${ENV_FILE} <<ENVEOF
+# WireGuard Manager - Frontend Environment Configuration
+# Generated on $(date)
+
+# Local PostgreSQL Database Connection
+VITE_LOCAL_DB_HOST=${SERVER_ENDPOINT}
+VITE_LOCAL_DB_PORT=5432
+VITE_LOCAL_DB_NAME=${DB_NAME}
+VITE_LOCAL_DB_USER=${DB_USER}
+VITE_LOCAL_DB_PASSWORD=${DB_PASSWORD}
+
+# Server API
+VITE_SERVER_API_URL=http://${SERVER_ENDPOINT}/api
+VITE_SERVER_TOKEN=${SERVER_TOKEN}
+
+# WireGuard Server
+VITE_WG_ENDPOINT=${SERVER_ENDPOINT}:${WG_PORT}
+VITE_WG_PUBLIC_KEY=${WG_PUBLIC_KEY}
+ENVEOF
+    
+    echo "Configuration also saved to: ${ENV_FILE}"
+    echo ""
+    echo "To download this file:"
+    echo "  scp root@${SERVER_ENDPOINT}:${ENV_FILE} .env.local"
+    echo ""
+}
 
 setup_ssl_cli() {
     source ${CONFIG_FILE} 2>/dev/null || true
@@ -1372,10 +1434,12 @@ print_summary() {
     echo "  ├─ Network: ${WG_NETWORK}"
     echo "  └─ Interface: wg0"
     echo ""
-    echo "Database:"
-    echo "  ├─ Name: ${DB_NAME}"
-    echo "  ├─ User: ${DB_USER}"
-    echo "  └─ Password: ${DB_PASSWORD}"
+    echo "Database Connection (for frontend .env file):"
+    echo "  ├─ VITE_LOCAL_DB_HOST=localhost"
+    echo "  ├─ VITE_LOCAL_DB_PORT=5432"
+    echo "  ├─ VITE_LOCAL_DB_NAME=${DB_NAME}"
+    echo "  ├─ VITE_LOCAL_DB_USER=${DB_USER}"
+    echo "  └─ VITE_LOCAL_DB_PASSWORD=${DB_PASSWORD}"
     echo ""
     echo "Server Token (for cloud sync): ${SERVER_TOKEN}"
     echo ""
@@ -1388,7 +1452,8 @@ print_summary() {
     echo "  ├─ wg-manager update        - Pull updates from GitHub"
     echo "  ├─ wg-manager enable-cloud  - Enable cloud sync"
     echo "  ├─ wg-manager set-github    - Set GitHub repo for updates"
-    echo "  └─ wg-manager ssl           - Setup SSL/HTTPS with Let's Encrypt"
+    echo "  ├─ wg-manager ssl           - Setup SSL/HTTPS with Let's Encrypt"
+    echo "  └─ wg-manager frontend      - Generate frontend connection config"
     echo ""
     echo "Config file: ${CONFIG_FILE}"
     echo "Backups: ${BACKUP_DIR}"

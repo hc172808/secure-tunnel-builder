@@ -47,6 +47,54 @@ export type Database = {
         }
         Relationships: []
       }
+      firewall_rules: {
+        Row: {
+          action: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          destination_ip: string | null
+          enabled: boolean | null
+          id: string
+          name: string
+          port: string | null
+          priority: number | null
+          protocol: string | null
+          source_ip: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          action?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          destination_ip?: string | null
+          enabled?: boolean | null
+          id?: string
+          name: string
+          port?: string | null
+          priority?: number | null
+          protocol?: string | null
+          source_ip?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          action?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          destination_ip?: string | null
+          enabled?: boolean | null
+          id?: string
+          name?: string
+          port?: string | null
+          priority?: number | null
+          protocol?: string | null
+          source_ip?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       invitations: {
         Row: {
           created_at: string
@@ -179,6 +227,7 @@ export type Database = {
           created_at: string
           display_name: string | null
           id: string
+          is_disabled: boolean | null
           updated_at: string
           user_id: string
           username: string | null
@@ -189,6 +238,7 @@ export type Database = {
           created_at?: string
           display_name?: string | null
           id?: string
+          is_disabled?: boolean | null
           updated_at?: string
           user_id: string
           username?: string | null
@@ -199,6 +249,7 @@ export type Database = {
           created_at?: string
           display_name?: string | null
           id?: string
+          is_disabled?: boolean | null
           updated_at?: string
           user_id?: string
           username?: string | null
