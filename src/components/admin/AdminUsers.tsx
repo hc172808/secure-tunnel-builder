@@ -67,9 +67,10 @@ export function AdminUsers() {
     
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, user_id, username, display_name, created_at, is_disabled");
+      .select("*");
 
     if (profilesError) {
+      console.error("Failed to fetch profiles:", profilesError);
       toast.error("Failed to fetch users");
       setLoading(false);
       return;
@@ -85,12 +86,12 @@ export function AdminUsers() {
       return;
     }
 
-    const usersWithRoles = profiles.map((profile: any) => {
+    const usersWithRoles = profiles.map((profile) => {
       const userRole = roles.find((r) => r.user_id === profile.user_id);
       return {
         ...profile,
         role: (userRole?.role || "user") as "admin" | "user",
-        is_disabled: profile.is_disabled || false,
+        is_disabled: (profile as any).is_disabled || false,
       };
     });
 
@@ -140,7 +141,7 @@ export function AdminUsers() {
     
     const { error } = await supabase
       .from("profiles")
-      .update({ is_disabled: newStatus } as any)
+      .update({ is_disabled: newStatus })
       .eq("user_id", targetUser.user_id);
 
     if (error) {
@@ -167,7 +168,7 @@ export function AdminUsers() {
     // For now, we'll just disable the user
     const { error } = await supabase
       .from("profiles")
-      .update({ is_disabled: true } as any)
+      .update({ is_disabled: true })
       .eq("user_id", deleteDialog.userId);
 
     if (error) {
