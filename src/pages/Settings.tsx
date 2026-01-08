@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Database, Server, Shield, Save, TestTube, Check, X, Loader2 } from "lucide-react";
+import { ArrowLeft, Database, Server, Shield, Save, TestTube, Check, X, Loader2, RefreshCw, FileJson } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,8 @@ import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
+import { SyncManager } from "@/components/SyncManager";
+import { SettingsExportImport } from "@/components/SettingsExportImport";
 
 interface DatabaseConfig {
   host: string;
@@ -185,7 +187,7 @@ export default function Settings() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="database" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 lg:w-[400px]">
+          <TabsList className="grid w-full grid-cols-4 lg:w-[600px]">
             <TabsTrigger value="database" className="gap-2">
               <Database className="h-4 w-4" />
               Database
@@ -193,6 +195,14 @@ export default function Settings() {
             <TabsTrigger value="server" className="gap-2">
               <Server className="h-4 w-4" />
               Server
+            </TabsTrigger>
+            <TabsTrigger value="sync" className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Sync
+            </TabsTrigger>
+            <TabsTrigger value="backup" className="gap-2">
+              <FileJson className="h-4 w-4" />
+              Backup
             </TabsTrigger>
           </TabsList>
 
@@ -386,6 +396,22 @@ VITE_LOCAL_DB_PASSWORD=<your_password>`}
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="sync" className="space-y-6">
+            <SyncManager />
+          </TabsContent>
+
+          <TabsContent value="backup" className="space-y-6">
+            <SettingsExportImport 
+              onImportComplete={() => {
+                // Reload configs after import
+                const savedDbConfig = localStorage.getItem(STORAGE_KEY_DB);
+                const savedServerConfig = localStorage.getItem(STORAGE_KEY_SERVER);
+                if (savedDbConfig) setDbConfig(JSON.parse(savedDbConfig));
+                if (savedServerConfig) setServerConfig(JSON.parse(savedServerConfig));
+              }}
+            />
           </TabsContent>
         </Tabs>
 
