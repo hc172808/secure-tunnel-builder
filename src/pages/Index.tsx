@@ -13,6 +13,7 @@ import { DownloadApps } from "@/components/DownloadApps";
 import { ChangePassword } from "@/components/ChangePassword";
 import { ApiTokenViewer } from "@/components/ApiTokenViewer";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
+import { SyncStatusBadge } from "@/components/SyncStatusBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -195,11 +196,12 @@ export default function Index() {
   const totalTransferTx = peers.reduce((acc, p) => acc + (p.transfer_tx || 0), 0);
   const totalTransfer = formatBytes(totalTransferRx + totalTransferTx);
 
-  const handleAddPeer = async (newPeer: { name: string; allowedIPs: string }) => {
+  const handleAddPeer = async (newPeer: { name: string; allowedIPs: string; publicKey: string; privateKey: string }) => {
     try {
       const { error } = await supabase.from("wireguard_peers").insert({
         name: newPeer.name,
-        public_key: btoa(Math.random().toString()).slice(0, 44) + "=",
+        public_key: newPeer.publicKey,
+        private_key: newPeer.privateKey,
         allowed_ips: newPeer.allowedIPs + "/32",
         status: "pending",
       });
@@ -305,6 +307,7 @@ export default function Index() {
               <span className="text-sm text-muted-foreground hidden md:block">
                 {profile?.display_name || user.email}
               </span>
+              <SyncStatusBadge />
               <ConnectionStatusIndicator />
               <DownloadApps 
                 peerConfig={configViewer.config} 
