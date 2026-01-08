@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
 import { SyncManager } from "@/components/SyncManager";
+import { SyncHistory } from "@/components/SyncHistory";
 import { SettingsExportImport } from "@/components/SettingsExportImport";
 
 interface DatabaseConfig {
@@ -400,6 +401,7 @@ VITE_LOCAL_DB_PASSWORD=<your_password>`}
 
           <TabsContent value="sync" className="space-y-6">
             <SyncManager />
+            <SyncHistory />
           </TabsContent>
 
           <TabsContent value="backup" className="space-y-6">

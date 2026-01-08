@@ -158,12 +158,13 @@ function resolveConflict(
   }
 }
 
-export async function performSync(syncConfig: SyncConfig): Promise<{ success: boolean; message: string }> {
+export async function performSync(syncConfig: SyncConfig): Promise<{ success: boolean; message: string; recordsSynced: number }> {
   const serverConfig = getServerConfig();
   if (!serverConfig?.apiUrl) {
-    return { success: false, message: "Local server not configured" };
+    return { success: false, message: "Local server not configured", recordsSynced: 0 };
   }
 
+  const startTime = Date.now();
   updateSyncStatus({ isRunning: true, direction: syncConfig.direction });
 
   try {
@@ -210,6 +211,8 @@ export async function performSync(syncConfig: SyncConfig): Promise<{ success: bo
     }
 
     const now = new Date().toISOString();
+    const duration = Date.now() - startTime;
+    
     localStorage.setItem(LAST_SYNC_KEY, now);
     updateSyncStatus({
       isRunning: false,
@@ -218,15 +221,78 @@ export async function performSync(syncConfig: SyncConfig): Promise<{ success: bo
       pendingChanges: 0,
     });
 
-    return { success: true, message: `Synced ${syncedCount} peers successfully` };
+    // Add to sync history
+    addToSyncHistory({
+      success: true,
+      message: `Synced ${syncedCount} peers successfully`,
+      direction: syncConfig.direction,
+      recordsSynced: syncedCount,
+      duration,
+    });
+
+    return { success: true, message: `Synced ${syncedCount} peers successfully`, recordsSynced: syncedCount };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Sync failed";
+    const duration = Date.now() - startTime;
+    
     updateSyncStatus({
       isRunning: false,
       lastError: errorMessage,
     });
-    return { success: false, message: errorMessage };
+
+    // Add to sync history
+    addToSyncHistory({
+      success: false,
+      message: errorMessage,
+      direction: syncConfig.direction,
+      recordsSynced: 0,
+      duration,
+    });
+
+    return { success: false, message: errorMessage, recordsSynced: 0 };
   }
+}
+
+// Sync history management
+const SYNC_HISTORY_KEY = "wg_sync_history";
+const MAX_HISTORY_ITEMS = 50;
+
+interface SyncHistoryEntry {
+  id: string;
+  timestamp: string;
+  success: boolean;
+  message: string;
+  direction: SyncConfig["direction"];
+  recordsSynced: number;
+  duration?: number;
+}
+
+function addToSyncHistory(entry: Omit<SyncHistoryEntry, "id" | "timestamp">) {
+  const history = getSyncHistory();
+  const newEntry: SyncHistoryEntry = {
+    ...entry,
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+  };
+  
+  history.unshift(newEntry);
+  
+  if (history.length > MAX_HISTORY_ITEMS) {
+    history.splice(MAX_HISTORY_ITEMS);
+  }
+  
+  localStorage.setItem(SYNC_HISTORY_KEY, JSON.stringify(history));
+  window.dispatchEvent(new CustomEvent("sync-history-updated", { detail: history }));
+}
+
+export function getSyncHistory(): SyncHistoryEntry[] {
+  const saved = localStorage.getItem(SYNC_HISTORY_KEY);
+  if (saved) {
+    try {
+      return JSON.parse(saved);
+    } catch {}
+  }
+  return [];
 }
 
 // Auto-sync manager
