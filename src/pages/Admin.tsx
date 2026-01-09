@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
@@ -15,6 +15,8 @@ import { AdminConsole } from "@/components/admin/AdminConsole";
 import { AdminInvitations } from "@/components/admin/AdminInvitations";
 import { AdminPeerRequests } from "@/components/admin/AdminPeerRequests";
 import { PeerNotifications } from "@/components/admin/PeerNotifications";
+import { AdminNoIP } from "@/components/admin/AdminNoIP";
+import { AdminPeerGroups } from "@/components/admin/AdminPeerGroups";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -99,6 +101,14 @@ export default function Admin() {
               <Terminal className="h-4 w-4" />
               <span className="hidden sm:inline">Console</span>
             </TabsTrigger>
+            <TabsTrigger value="groups" className="flex items-center gap-2">
+              <Tags className="h-4 w-4" />
+              <span className="hidden sm:inline">Groups</span>
+            </TabsTrigger>
+            <TabsTrigger value="noip" className="flex items-center gap-2">
+              <Globe className="h-4 w-4" />
+              <span className="hidden sm:inline">No-IP</span>
+            </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               <span className="hidden sm:inline">Settings</span>
@@ -135,6 +145,14 @@ export default function Admin() {
 
           <TabsContent value="console">
             <AdminConsole />
+          </TabsContent>
+
+          <TabsContent value="groups">
+            <AdminPeerGroups />
+          </TabsContent>
+
+          <TabsContent value="noip">
+            <AdminNoIP />
           </TabsContent>
 
           <TabsContent value="settings">

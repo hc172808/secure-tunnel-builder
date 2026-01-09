@@ -11,9 +11,23 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, RefreshCw, Copy, Check, Key, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { generateKeyPair, WireGuardKeyPair } from "@/lib/wireguardKeys";
+import { supabase } from "@/integrations/supabase/client";
+
+interface PeerGroup {
+  id: string;
+  name: string;
+  color: string;
+}
 
 interface AddPeerDialogProps {
   onAddPeer: (peer: {
@@ -21,6 +35,7 @@ interface AddPeerDialogProps {
     allowedIPs: string;
     publicKey: string;
     privateKey: string;
+    groupId?: string;
   }) => void;
 }
 
@@ -32,13 +47,32 @@ export function AddPeerDialog({ onAddPeer }: AddPeerDialogProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [groups, setGroups] = useState<PeerGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
 
-  // Generate keys when dialog opens
+  // Fetch groups and generate keys when dialog opens
   useEffect(() => {
-    if (open && !keyPair) {
-      generateKeys();
+    if (open) {
+      if (!keyPair) {
+        generateKeys();
+      }
+      fetchGroups();
     }
   }, [open]);
+
+  const fetchGroups = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("peer_groups")
+        .select("id, name, color")
+        .order("name");
+      
+      if (error) throw error;
+      setGroups(data || []);
+    } catch (error) {
+      console.error("Error fetching groups:", error);
+    }
+  };
 
   const generateKeys = async () => {
     setIsGenerating(true);
@@ -86,6 +120,7 @@ export function AddPeerDialog({ onAddPeer }: AddPeerDialogProps) {
       allowedIPs,
       publicKey: keyPair.publicKey,
       privateKey: keyPair.privateKey,
+      groupId: selectedGroupId || undefined,
     });
     
     // Reset form
@@ -93,6 +128,7 @@ export function AddPeerDialog({ onAddPeer }: AddPeerDialogProps) {
     setAllowedIPs("10.0.0.");
     setKeyPair(null);
     setShowPrivateKey(false);
+    setSelectedGroupId("");
     setOpen(false);
   };
 
@@ -104,6 +140,7 @@ export function AddPeerDialog({ onAddPeer }: AddPeerDialogProps) {
       setAllowedIPs("10.0.0.");
       setKeyPair(null);
       setShowPrivateKey(false);
+      setSelectedGroupId("");
     }
   };
 
@@ -152,6 +189,34 @@ export function AddPeerDialog({ onAddPeer }: AddPeerDialogProps) {
                 The IP address range this peer is allowed to use
               </p>
             </div>
+
+            {/* Group Selection */}
+            {groups.length > 0 && (
+              <div className="grid gap-2">
+                <Label htmlFor="group" className="text-foreground">
+                  Group (optional)
+                </Label>
+                <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+                  <SelectTrigger className="bg-secondary border-border">
+                    <SelectValue placeholder="Select a group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No group</SelectItem>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="h-3 w-3 rounded-full"
+                            style={{ backgroundColor: group.color }}
+                          />
+                          {group.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Key Generation Section */}
             <div className="space-y-3 pt-4 border-t border-border">
