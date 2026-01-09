@@ -1,4 +1,4 @@
-import { Copy, MoreVertical, Trash2, Settings, Download, QrCode } from "lucide-react";
+import { Copy, MoreVertical, Trash2, Settings, Download, QrCode, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import {
@@ -14,8 +14,11 @@ interface Peer {
   id: string;
   name: string;
   publicKey: string;
+  privateKey?: string;
   allowedIPs: string;
   endpoint?: string;
+  dns?: string;
+  persistentKeepalive?: number;
   lastHandshake?: string;
   transferRx?: string;
   transferTx?: string;
@@ -25,12 +28,13 @@ interface Peer {
 interface PeerCardProps {
   peer: Peer;
   onDelete?: (id: string) => void;
+  onEdit?: (peer: Peer) => void;
   onViewConfig?: (id: string) => void;
   onViewQR?: (id: string) => void;
   isAdmin?: boolean;
 }
 
-export function PeerCard({ peer, onDelete, onViewConfig, onViewQR, isAdmin = false }: PeerCardProps) {
+export function PeerCard({ peer, onDelete, onEdit, onViewConfig, onViewQR, isAdmin = false }: PeerCardProps) {
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} copied to clipboard`);
@@ -57,6 +61,12 @@ export function PeerCard({ peer, onDelete, onViewConfig, onViewQR, isAdmin = fal
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="bg-card border-border">
+              {isAdmin && onEdit && (
+                <DropdownMenuItem onClick={() => onEdit(peer)} className="cursor-pointer">
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit Peer
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => onViewConfig?.(peer.id)} className="cursor-pointer">
                 <Settings className="mr-2 h-4 w-4" />
                 View Config
