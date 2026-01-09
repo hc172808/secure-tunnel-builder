@@ -201,7 +201,7 @@ export default function Index() {
   const totalTransferTx = peers.reduce((acc, p) => acc + (p.transfer_tx || 0), 0);
   const totalTransfer = formatBytes(totalTransferRx + totalTransferTx);
 
-  const handleAddPeer = async (newPeer: { name: string; allowedIPs: string; publicKey: string; privateKey: string }) => {
+  const handleAddPeer = async (newPeer: { name: string; allowedIPs: string; publicKey: string; privateKey: string; groupId?: string }) => {
     try {
       const { error } = await supabase.from("wireguard_peers").insert({
         name: newPeer.name,
@@ -209,6 +209,7 @@ export default function Index() {
         private_key: newPeer.privateKey,
         allowed_ips: newPeer.allowedIPs + "/32",
         status: "pending",
+        group_id: newPeer.groupId || null,
       });
       
       if (error) throw error;

@@ -1,6 +1,7 @@
 import { Copy, MoreVertical, Trash2, Settings, Download, QrCode, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
+import { PeerGroupBadge } from "./PeerGroupBadge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,6 +10,12 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+
+interface PeerGroup {
+  id: string;
+  name: string;
+  color: string;
+}
 
 interface Peer {
   id: string;
@@ -23,6 +30,7 @@ interface Peer {
   transferRx?: string;
   transferTx?: string;
   status: "connected" | "disconnected" | "pending";
+  group?: PeerGroup | null;
 }
 
 interface PeerCardProps {
@@ -48,7 +56,12 @@ export function PeerCard({ peer, onDelete, onEdit, onViewConfig, onViewQR, isAdm
             {peer.name.charAt(0).toUpperCase()}
           </div>
           <div>
-            <h3 className="font-semibold text-foreground">{peer.name}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-foreground">{peer.name}</h3>
+              {peer.group && (
+                <PeerGroupBadge name={peer.group.name} color={peer.group.color} />
+              )}
+            </div>
             <p className="text-xs text-muted-foreground">{peer.allowedIPs}</p>
           </div>
         </div>

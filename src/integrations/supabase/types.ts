@@ -157,6 +157,33 @@ export type Database = {
           },
         ]
       }
+      peer_groups: {
+        Row: {
+          color: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
       peer_notifications: {
         Row: {
           created_at: string
@@ -343,6 +370,7 @@ export type Database = {
           created_by: string | null
           dns: string | null
           endpoint: string | null
+          group_id: string | null
           id: string
           last_handshake: string | null
           name: string
@@ -360,6 +388,7 @@ export type Database = {
           created_by?: string | null
           dns?: string | null
           endpoint?: string | null
+          group_id?: string | null
           id?: string
           last_handshake?: string | null
           name: string
@@ -377,6 +406,7 @@ export type Database = {
           created_by?: string | null
           dns?: string | null
           endpoint?: string | null
+          group_id?: string | null
           id?: string
           last_handshake?: string | null
           name?: string
@@ -388,7 +418,15 @@ export type Database = {
           transfer_tx?: number | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "wireguard_peers_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "peer_groups"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
