@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { PeerCard } from "@/components/PeerCard";
 import { AddPeerDialog } from "@/components/AddPeerDialog";
+import { EditPeerDialog } from "@/components/EditPeerDialog";
 import { ConfigViewer } from "@/components/ConfigViewer";
 import { QRCodeViewer } from "@/components/QRCodeViewer";
 import { ServerStatus } from "@/components/ServerStatus";
@@ -26,6 +27,7 @@ interface WireGuardPeer {
   allowed_ips: string;
   endpoint?: string;
   dns: string;
+  persistent_keepalive?: number;
   status: "connected" | "disconnected" | "pending";
   last_handshake?: string;
   transfer_rx: number;
@@ -82,6 +84,8 @@ export default function Index() {
     peerName: string;
     config: string;
   }>({ open: false, peerName: "", config: "" });
+  const [editingPeer, setEditingPeer] = useState<WireGuardPeer | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Fetch peers from database
@@ -103,6 +107,7 @@ export default function Index() {
           allowed_ips: peer.allowed_ips || "10.0.0.0/24",
           endpoint: peer.endpoint,
           dns: peer.dns || "1.1.1.1",
+          persistent_keepalive: peer.persistent_keepalive ?? 25,
           status: (peer.status as "connected" | "disconnected" | "pending") || "disconnected",
           last_handshake: peer.last_handshake,
           transfer_rx: peer.transfer_rx || 0,
@@ -238,6 +243,68 @@ export default function Index() {
       fetchPeers();
     } catch (error) {
       toast.error("Failed to delete peer");
+    }
+  };
+
+  const handleEditPeer = (peer: {
+    id: string;
+    name: string;
+    publicKey: string;
+    allowedIPs: string;
+    status: "connected" | "disconnected" | "pending";
+  }) => {
+    const fullPeer = peers.find((p) => p.id === peer.id);
+    if (fullPeer) {
+      setEditingPeer(fullPeer);
+      setEditDialogOpen(true);
+    }
+  };
+
+  const handleSavePeer = async (updatedPeer: {
+    id: string;
+    name: string;
+    allowedIPs: string;
+    publicKey: string;
+    privateKey?: string;
+    dns?: string;
+    persistentKeepalive?: number;
+  }) => {
+    try {
+      const updateData: Record<string, unknown> = {
+        name: updatedPeer.name,
+        allowed_ips: updatedPeer.allowedIPs,
+        public_key: updatedPeer.publicKey,
+        dns: updatedPeer.dns,
+        persistent_keepalive: updatedPeer.persistentKeepalive,
+      };
+
+      // Only update private key if new keys were generated
+      if (updatedPeer.privateKey) {
+        updateData.private_key = updatedPeer.privateKey;
+      }
+
+      const { error } = await supabase
+        .from("wireguard_peers")
+        .update(updateData)
+        .eq("id", updatedPeer.id);
+
+      if (error) throw error;
+
+      await supabase.from("audit_logs").insert({
+        user_id: user?.id,
+        action: "UPDATE",
+        resource_type: "peer",
+        resource_id: updatedPeer.id,
+        details: { 
+          name: updatedPeer.name,
+          keys_regenerated: !!updatedPeer.privateKey 
+        },
+      });
+
+      toast.success("Peer updated successfully");
+      fetchPeers();
+    } catch (error) {
+      toast.error("Failed to update peer");
     }
   };
 
@@ -414,14 +481,18 @@ export default function Index() {
                       id: peer.id,
                       name: peer.name,
                       publicKey: peer.public_key,
+                      privateKey: peer.private_key,
                       allowedIPs: peer.allowed_ips,
                       endpoint: peer.endpoint,
+                      dns: peer.dns,
+                      persistentKeepalive: peer.persistent_keepalive,
                       lastHandshake: peer.last_handshake,
                       transferRx: formatBytes(peer.transfer_rx),
                       transferTx: formatBytes(peer.transfer_tx),
                       status: peer.status,
                     }}
                     onDelete={isAdmin ? handleDeletePeer : undefined}
+                    onEdit={isAdmin ? handleEditPeer : undefined}
                     onViewConfig={handleViewConfig}
                     onViewQR={handleViewQR}
                     isAdmin={isAdmin}
@@ -455,6 +526,24 @@ export default function Index() {
         onClose={() => setQrViewer({ ...qrViewer, open: false })}
         peerName={qrViewer.peerName}
         config={qrViewer.config}
+      />
+
+      {/* Edit Peer Dialog */}
+      <EditPeerDialog
+        peer={editingPeer ? {
+          id: editingPeer.id,
+          name: editingPeer.name,
+          publicKey: editingPeer.public_key,
+          privateKey: editingPeer.private_key,
+          allowedIPs: editingPeer.allowed_ips,
+          endpoint: editingPeer.endpoint,
+          dns: editingPeer.dns,
+          persistentKeepalive: editingPeer.persistent_keepalive,
+          status: editingPeer.status,
+        } : null}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onSave={handleSavePeer}
       />
     </div>
   );
