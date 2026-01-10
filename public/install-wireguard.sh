@@ -163,10 +163,34 @@ CREATE TABLE IF NOT EXISTS wireguard_peers (
     last_handshake TIMESTAMPTZ,
     transfer_rx BIGINT DEFAULT 0,
     transfer_tx BIGINT DEFAULT 0,
+    group_id UUID REFERENCES peer_groups(id) ON DELETE SET NULL,
     created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Peer groups table
+CREATE TABLE IF NOT EXISTS peer_groups (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    color TEXT DEFAULT '#3b82f6',
+    description TEXT,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add foreign key after both tables exist
+ALTER TABLE wireguard_peers DROP CONSTRAINT IF EXISTS wireguard_peers_group_id_fkey;
+ALTER TABLE wireguard_peers ADD CONSTRAINT wireguard_peers_group_id_fkey 
+    FOREIGN KEY (group_id) REFERENCES peer_groups(id) ON DELETE SET NULL;
+
+-- Insert default peer groups
+INSERT INTO peer_groups (name, color, description) VALUES 
+    ('Mobile', '#22c55e', 'Mobile devices like phones and tablets'),
+    ('Desktop', '#3b82f6', 'Desktop computers and laptops'),
+    ('Servers', '#f59e0b', 'Server infrastructure'),
+    ('Employees', '#8b5cf6', 'Employee devices')
+ON CONFLICT DO NOTHING;
 
 -- Server settings table
 CREATE TABLE IF NOT EXISTS server_settings (
@@ -533,12 +557,14 @@ remove_peer() {
 list_peers() {
     export PGPASSWORD="${DB_PASSWORD}"
     psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
-        SELECT name, status, allowed_ips, 
-               COALESCE(to_char(last_handshake, 'YYYY-MM-DD HH24:MI:SS'), 'Never') as last_seen,
-               pg_size_pretty(transfer_rx) as download,
-               pg_size_pretty(transfer_tx) as upload
-        FROM wireguard_peers
-        ORDER BY created_at;
+        SELECT wp.name, wp.status, wp.allowed_ips, 
+               COALESCE(pg.name, 'Ungrouped') as group_name,
+               COALESCE(to_char(wp.last_handshake, 'YYYY-MM-DD HH24:MI:SS'), 'Never') as last_seen,
+               pg_size_pretty(wp.transfer_rx) as download,
+               pg_size_pretty(wp.transfer_tx) as upload
+        FROM wireguard_peers wp
+        LEFT JOIN peer_groups pg ON wp.group_id = pg.id
+        ORDER BY wp.created_at;
     "
 }
 
@@ -565,10 +591,10 @@ show_qr() {
 case $ACTION in
     add)
         if [ -z "$PEER_NAME" ]; then
-            echo "Usage: $0 add <peer_name>"
+            echo "Usage: $0 add <peer_name> [group_name]"
             exit 1
         fi
-        add_peer "$PEER_NAME"
+        add_peer "$PEER_NAME" "$3"
         ;;
     remove)
         if [ -z "$PEER_NAME" ]; then
@@ -577,6 +603,35 @@ case $ACTION in
         fi
         remove_peer "$PEER_NAME"
         ;;
+    list)
+        list_peers
+        ;;
+    config)
+        if [ -z "$PEER_NAME" ]; then
+            echo "Usage: $0 config <peer_name>"
+            exit 1
+        fi
+        show_config "$PEER_NAME"
+        ;;
+    qr)
+        if [ -z "$PEER_NAME" ]; then
+            echo "Usage: $0 qr <peer_name>"
+            exit 1
+        fi
+        show_qr "$PEER_NAME"
+        ;;
+    *)
+        echo "Usage: $0 {add|remove|list|config|qr} [peer_name] [group_name]"
+        echo ""
+        echo "Examples:"
+        echo "  $0 add laptop                    # Add peer without group"
+        echo "  $0 add laptop Mobile             # Add peer to Mobile group"
+        echo "  $0 add phone Employees           # Add peer to Employees group"
+        echo "  $0 remove laptop                 # Remove peer"
+        echo "  $0 list                          # List all peers with groups"
+        exit 1
+        ;;
+esac
     list)
         list_peers
         ;;
@@ -881,6 +936,7 @@ create_cli_wrapper() {
     
     # Create symlinks for easy access
     ln -sf ${INSTALL_DIR}/manage-peer.sh /usr/local/bin/wg-peer
+    ln -sf ${INSTALL_DIR}/bulk-peers.sh /usr/local/bin/wg-bulk
     ln -sf ${INSTALL_DIR}/backup.sh /usr/local/bin/wg-backup
     ln -sf ${INSTALL_DIR}/restore.sh /usr/local/bin/wg-restore
     ln -sf ${INSTALL_DIR}/sync.sh /usr/local/bin/wg-sync
@@ -1017,11 +1073,17 @@ case $1 in
         echo "  logs              View sync logs"
         echo ""
         echo "Peer Commands:"
-        echo "  peer add <name>   Add a new peer"
-        echo "  peer remove <n>   Remove a peer"
-        echo "  peer list         List all peers"
-        echo "  peer config <n>   Show peer config"
-        echo "  peer qr <name>    Show peer QR code"
+        echo "  peer add <name> [group]  Add a new peer (optionally to a group)"
+        echo "  peer remove <name>       Remove a peer"
+        echo "  peer list                List all peers with groups"
+        echo "  peer config <name>       Show peer config"
+        echo "  peer qr <name>           Show peer QR code"
+        echo ""
+        echo "Bulk Operations:"
+        echo "  wg-bulk export [file]     Export all peers to JSON"
+        echo "  wg-bulk import <file>     Import peers from JSON"
+        echo "  wg-bulk groups            List all peer groups"
+        echo "  wg-bulk add-group <name>  Add a new peer group"
         echo ""
         echo "Backup Commands:"
         echo "  backup            Create backup"
