@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,9 +15,17 @@ import { ChangePassword } from "@/components/ChangePassword";
 import { ApiTokenViewer } from "@/components/ApiTokenViewer";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
 import { SyncStatusBadge } from "@/components/SyncStatusBadge";
+import { PeerGroupFilter } from "@/components/PeerGroupFilter";
+import { BulkPeerImportExport } from "@/components/BulkPeerImportExport";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+
+interface PeerGroup {
+  id: string;
+  name: string;
+  color: string;
+}
 
 interface WireGuardPeer {
   id: string;
@@ -33,6 +41,8 @@ interface WireGuardPeer {
   transfer_rx: number;
   transfer_tx: number;
   created_at: string;
+  group_id?: string | null;
+  group?: PeerGroup | null;
 }
 
 interface ServerSettings {
@@ -87,13 +97,21 @@ export default function Index() {
   const [editingPeer, setEditingPeer] = useState<WireGuardPeer | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
 
   // Fetch peers from database
   const fetchPeers = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from("wireguard_peers")
-        .select("*")
+        .select(`
+          *,
+          peer_groups (
+            id,
+            name,
+            color
+          )
+        `)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -113,6 +131,8 @@ export default function Index() {
           transfer_rx: peer.transfer_rx || 0,
           transfer_tx: peer.transfer_tx || 0,
           created_at: peer.created_at,
+          group_id: peer.group_id,
+          group: peer.peer_groups as PeerGroup | null,
         })));
       }
     } catch (error) {
@@ -196,7 +216,23 @@ export default function Index() {
     }
   }, [user, loading, navigate]);
 
+  // Filter peers based on selected groups
+  const filteredPeers = useMemo(() => {
+    if (selectedGroups.length === 0) return peers;
+    
+    return peers.filter((peer) => {
+      if (selectedGroups.includes("ungrouped")) {
+        if (!peer.group_id) return true;
+      }
+      if (peer.group_id && selectedGroups.includes(peer.group_id)) {
+        return true;
+      }
+      return false;
+    });
+  }, [peers, selectedGroups]);
+
   const connectedPeers = peers.filter((p) => p.status === "connected").length;
+  const filteredConnectedPeers = filteredPeers.filter((p) => p.status === "connected").length;
   const totalTransferRx = peers.reduce((acc, p) => acc + (p.transfer_rx || 0), 0);
   const totalTransferTx = peers.reduce((acc, p) => acc + (p.transfer_tx || 0), 0);
   const totalTransfer = formatBytes(totalTransferRx + totalTransferTx);
@@ -269,6 +305,7 @@ export default function Index() {
     privateKey?: string;
     dns?: string;
     persistentKeepalive?: number;
+    groupId?: string | null;
   }) => {
     try {
       const updateData: Record<string, unknown> = {
@@ -277,6 +314,7 @@ export default function Index() {
         public_key: updatedPeer.publicKey,
         dns: updatedPeer.dns,
         persistent_keepalive: updatedPeer.persistentKeepalive,
+        group_id: updatedPeer.groupId || null,
       };
 
       // Only update private key if new keys were generated
@@ -298,7 +336,8 @@ export default function Index() {
         resource_id: updatedPeer.id,
         details: { 
           name: updatedPeer.name,
-          keys_regenerated: !!updatedPeer.privateKey 
+          keys_regenerated: !!updatedPeer.privateKey,
+          group_changed: true,
         },
       });
 
@@ -464,14 +503,24 @@ export default function Index() {
 
           {/* Peers List */}
           <div className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-foreground">Peers</h2>
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h2 className="text-lg font-semibold text-foreground">Peers</h2>
+                <PeerGroupFilter
+                  selectedGroups={selectedGroups}
+                  onFilterChange={setSelectedGroups}
+                />
+                {isAdmin && <BulkPeerImportExport onImportComplete={fetchPeers} />}
+              </div>
               <p className="text-sm text-muted-foreground">
-                {peers.length} total · {connectedPeers} online
+                {selectedGroups.length > 0 
+                  ? `${filteredPeers.length} filtered · ${filteredConnectedPeers} online`
+                  : `${peers.length} total · ${connectedPeers} online`
+                }
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              {peers.map((peer, index) => (
+              {filteredPeers.map((peer, index) => (
                 <div
                   key={peer.id}
                   className="animate-fade-in"
@@ -491,6 +540,7 @@ export default function Index() {
                       transferRx: formatBytes(peer.transfer_rx),
                       transferTx: formatBytes(peer.transfer_tx),
                       status: peer.status,
+                      group: peer.group,
                     }}
                     onDelete={isAdmin ? handleDeletePeer : undefined}
                     onEdit={isAdmin ? handleEditPeer : undefined}
@@ -541,6 +591,7 @@ export default function Index() {
           dns: editingPeer.dns,
           persistentKeepalive: editingPeer.persistent_keepalive,
           status: editingPeer.status,
+          groupId: editingPeer.group_id,
         } : null}
         open={editDialogOpen}
         onOpenChange={setEditDialogOpen}

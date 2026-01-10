@@ -10,9 +10,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { RefreshCw, Copy, Check, Key, Eye, EyeOff, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { generateKeyPair, WireGuardKeyPair } from "@/lib/wireguardKeys";
+import { supabase } from "@/integrations/supabase/client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +32,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+interface PeerGroup {
+  id: string;
+  name: string;
+  color: string;
+}
+
 interface Peer {
   id: string;
   name: string;
@@ -34,6 +48,7 @@ interface Peer {
   dns?: string;
   persistentKeepalive?: number;
   status: "connected" | "disconnected" | "pending";
+  groupId?: string | null;
 }
 
 interface EditPeerDialogProps {
@@ -48,6 +63,7 @@ interface EditPeerDialogProps {
     privateKey?: string;
     dns?: string;
     persistentKeepalive?: number;
+    groupId?: string | null;
   }) => void;
 }
 
@@ -63,6 +79,33 @@ export function EditPeerDialog({ peer, open, onOpenChange, onSave }: EditPeerDia
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [keysRegenerated, setKeysRegenerated] = useState(false);
+  const [groups, setGroups] = useState<PeerGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+
+  // Fetch groups
+  useEffect(() => {
+    const fetchGroups = async () => {
+      setLoadingGroups(true);
+      try {
+        const { data, error } = await supabase
+          .from("peer_groups")
+          .select("id, name, color")
+          .order("name");
+
+        if (error) throw error;
+        setGroups(data || []);
+      } catch (error) {
+        console.error("Error fetching groups:", error);
+      } finally {
+        setLoadingGroups(false);
+      }
+    };
+
+    if (open) {
+      fetchGroups();
+    }
+  }, [open]);
 
   // Load peer data when dialog opens
   useEffect(() => {
@@ -72,6 +115,7 @@ export function EditPeerDialog({ peer, open, onOpenChange, onSave }: EditPeerDia
       setDns(peer.dns || "1.1.1.1");
       setPersistentKeepalive(peer.persistentKeepalive?.toString() || "25");
       setCurrentPublicKey(peer.publicKey);
+      setSelectedGroupId(peer.groupId || null);
       setNewKeyPair(null);
       setKeysRegenerated(false);
       setShowPrivateKey(false);
@@ -127,6 +171,7 @@ export function EditPeerDialog({ peer, open, onOpenChange, onSave }: EditPeerDia
       privateKey: newKeyPair?.privateKey,
       dns: dns || undefined,
       persistentKeepalive: persistentKeepalive ? parseInt(persistentKeepalive, 10) : undefined,
+      groupId: selectedGroupId,
     });
     
     onOpenChange(false);
@@ -205,6 +250,41 @@ export function EditPeerDialog({ peer, open, onOpenChange, onSave }: EditPeerDia
                     className="bg-secondary border-border font-mono"
                   />
                 </div>
+              </div>
+
+              {/* Group Selection */}
+              <div className="grid gap-2">
+                <Label htmlFor="edit-group" className="text-foreground">
+                  Peer Group
+                </Label>
+                <Select
+                  value={selectedGroupId || "none"}
+                  onValueChange={(value) => setSelectedGroupId(value === "none" ? null : value)}
+                  disabled={loadingGroups}
+                >
+                  <SelectTrigger className="bg-secondary border-border">
+                    <SelectValue placeholder="Select a group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      <div className="flex items-center gap-2">
+                        <div className="h-3 w-3 rounded-full bg-muted-foreground/30" />
+                        No Group
+                      </div>
+                    </SelectItem>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="h-3 w-3 rounded-full"
+                            style={{ backgroundColor: group.color }}
+                          />
+                          {group.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Key Section */}
