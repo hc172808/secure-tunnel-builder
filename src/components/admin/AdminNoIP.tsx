@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
-import { Globe, RefreshCw, Eye, EyeOff, Save, ExternalLink, CheckCircle, AlertCircle } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Globe, RefreshCw, Eye, EyeOff, Save, ExternalLink, CheckCircle, AlertCircle, Clock, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,6 +18,8 @@ interface NoIPSettings {
   lastUpdate: string | null;
   lastIP: string | null;
   updateInterval: number;
+  autoUpdateEnabled: boolean;
+  nextUpdate: string | null;
 }
 
 export function AdminNoIP() {
@@ -29,82 +32,31 @@ export function AdminNoIP() {
     lastUpdate: null,
     lastIP: null,
     updateInterval: 30,
+    autoUpdateEnabled: false,
+    nextUpdate: null,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [currentIP, setCurrentIP] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchSettings();
-    fetchCurrentIP();
-  }, []);
-
-  const fetchSettings = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("server_settings")
-        .select("setting_key, setting_value")
-        .in("setting_key", [
-          "noip_enabled",
-          "noip_username",
-          "noip_password",
-          "noip_hostname",
-          "noip_last_update",
-          "noip_last_ip",
-          "noip_update_interval",
-        ]);
-
-      if (error) throw error;
-
-      const newSettings: Partial<NoIPSettings> = {};
-      data?.forEach((row) => {
-        switch (row.setting_key) {
-          case "noip_enabled":
-            newSettings.enabled = row.setting_value === "true";
-            break;
-          case "noip_username":
-            newSettings.username = row.setting_value;
-            break;
-          case "noip_password":
-            newSettings.password = row.setting_value;
-            break;
-          case "noip_hostname":
-            newSettings.hostname = row.setting_value;
-            break;
-          case "noip_last_update":
-            newSettings.lastUpdate = row.setting_value;
-            break;
-          case "noip_last_ip":
-            newSettings.lastIP = row.setting_value;
-            break;
-          case "noip_update_interval":
-            newSettings.updateInterval = parseInt(row.setting_value) || 30;
-            break;
-        }
-      });
-
-      setSettings((prev) => ({ ...prev, ...newSettings }));
-    } catch (error) {
-      console.error("Error fetching No-IP settings:", error);
-      toast.error("Failed to load No-IP settings");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [timeUntilUpdate, setTimeUntilUpdate] = useState<string>("");
+  const updateTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchCurrentIP = async () => {
     try {
       const response = await fetch("https://api.ipify.org?format=json");
       const data = await response.json();
       setCurrentIP(data.ip);
+      return data.ip;
     } catch (error) {
       console.error("Error fetching current IP:", error);
+      return null;
     }
   };
 
-  const saveSetting = async (key: string, value: string) => {
+  const saveSetting = useCallback(async (key: string, value: string) => {
     const { data: existing } = await supabase
       .from("server_settings")
       .select("id")
@@ -124,7 +76,174 @@ export function AdminNoIP() {
         updated_by: user?.id,
       });
     }
-  };
+  }, [user?.id]);
+
+  const performIPUpdate = useCallback(async () => {
+    const newIP = await fetchCurrentIP() || "Unknown";
+    
+    await Promise.all([
+      saveSetting("noip_last_update", new Date().toISOString()),
+      saveSetting("noip_last_ip", newIP),
+    ]);
+
+    setSettings((prev) => ({
+      ...prev,
+      lastUpdate: new Date().toISOString(),
+      lastIP: newIP,
+    }));
+
+    await supabase.from("audit_logs").insert({
+      user_id: user?.id,
+      action: "UPDATE",
+      resource_type: "noip_ip_update",
+      details: { ip: newIP, auto: true },
+    });
+
+    return newIP;
+  }, [saveSetting, user?.id]);
+
+  const startAutoUpdateTimer = useCallback((intervalMinutes: number) => {
+    if (updateTimerRef.current) clearInterval(updateTimerRef.current);
+    
+    const intervalMs = intervalMinutes * 60 * 1000;
+    
+    const nextUpdateTime = new Date(Date.now() + intervalMs).toISOString();
+    setSettings(prev => ({ ...prev, nextUpdate: nextUpdateTime }));
+    saveSetting("noip_next_update", nextUpdateTime);
+    
+    updateTimerRef.current = setInterval(async () => {
+      console.log("Auto-updating No-IP...");
+      await performIPUpdate();
+      
+      const newNextUpdate = new Date(Date.now() + intervalMs).toISOString();
+      setSettings(prev => ({ ...prev, nextUpdate: newNextUpdate }));
+      saveSetting("noip_next_update", newNextUpdate);
+    }, intervalMs);
+  }, [performIPUpdate, saveSetting]);
+
+  const stopAutoUpdateTimer = useCallback(() => {
+    if (updateTimerRef.current) {
+      clearInterval(updateTimerRef.current);
+      updateTimerRef.current = null;
+    }
+    setTimeUntilUpdate("");
+  }, []);
+
+  const updateCountdown = useCallback(() => {
+    setSettings(prev => {
+      if (!prev.nextUpdate) {
+        setTimeUntilUpdate("");
+        return prev;
+      }
+      const next = new Date(prev.nextUpdate).getTime();
+      const now = Date.now();
+      const diff = next - now;
+      
+      if (diff <= 0) {
+        setTimeUntilUpdate("Updating...");
+        return prev;
+      }
+      
+      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      setTimeUntilUpdate(`${minutes}m ${seconds}s`);
+      return prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("server_settings")
+          .select("setting_key, setting_value")
+          .in("setting_key", [
+            "noip_enabled",
+            "noip_username",
+            "noip_password",
+            "noip_hostname",
+            "noip_last_update",
+            "noip_last_ip",
+            "noip_update_interval",
+            "noip_auto_update_enabled",
+            "noip_next_update",
+          ]);
+
+        if (error) throw error;
+
+        const newSettings: Partial<NoIPSettings> = {};
+        data?.forEach((row) => {
+          switch (row.setting_key) {
+            case "noip_enabled":
+              newSettings.enabled = row.setting_value === "true";
+              break;
+            case "noip_username":
+              newSettings.username = row.setting_value;
+              break;
+            case "noip_password":
+              newSettings.password = row.setting_value;
+              break;
+            case "noip_hostname":
+              newSettings.hostname = row.setting_value;
+              break;
+            case "noip_last_update":
+              newSettings.lastUpdate = row.setting_value;
+              break;
+            case "noip_last_ip":
+              newSettings.lastIP = row.setting_value;
+              break;
+            case "noip_update_interval":
+              newSettings.updateInterval = parseInt(row.setting_value) || 30;
+              break;
+            case "noip_auto_update_enabled":
+              newSettings.autoUpdateEnabled = row.setting_value === "true";
+              break;
+            case "noip_next_update":
+              newSettings.nextUpdate = row.setting_value || null;
+              break;
+          }
+        });
+
+        setSettings((prev) => ({ ...prev, ...newSettings }));
+      } catch (error) {
+        console.error("Error fetching No-IP settings:", error);
+        toast.error("Failed to load No-IP settings");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSettings();
+    fetchCurrentIP();
+    
+    return () => {
+      if (updateTimerRef.current) clearInterval(updateTimerRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (settings.autoUpdateEnabled && settings.enabled && settings.hostname) {
+      startAutoUpdateTimer(settings.updateInterval);
+    } else {
+      stopAutoUpdateTimer();
+    }
+    return () => {
+      if (updateTimerRef.current) clearInterval(updateTimerRef.current);
+    };
+  }, [settings.autoUpdateEnabled, settings.enabled, settings.hostname, settings.updateInterval, startAutoUpdateTimer, stopAutoUpdateTimer]);
+
+  useEffect(() => {
+    if (settings.nextUpdate && settings.autoUpdateEnabled) {
+      updateCountdown();
+      countdownRef.current = setInterval(updateCountdown, 1000);
+    } else {
+      setTimeUntilUpdate("");
+    }
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [settings.nextUpdate, settings.autoUpdateEnabled, updateCountdown]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -135,13 +254,19 @@ export function AdminNoIP() {
         saveSetting("noip_password", settings.password),
         saveSetting("noip_hostname", settings.hostname),
         saveSetting("noip_update_interval", settings.updateInterval.toString()),
+        saveSetting("noip_auto_update_enabled", settings.autoUpdateEnabled.toString()),
       ]);
 
       await supabase.from("audit_logs").insert({
         user_id: user?.id,
         action: "UPDATE",
         resource_type: "noip_settings",
-        details: { hostname: settings.hostname, enabled: settings.enabled },
+        details: { 
+          hostname: settings.hostname, 
+          enabled: settings.enabled,
+          autoUpdate: settings.autoUpdateEnabled,
+          interval: settings.updateInterval,
+        },
       });
 
       toast.success("No-IP settings saved successfully");
@@ -161,37 +286,26 @@ export function AdminNoIP() {
 
     setUpdating(true);
     try {
-      // Build the No-IP update URL
-      const updateUrl = `https://dynupdate.no-ip.com/nic/update?hostname=${encodeURIComponent(settings.hostname)}`;
-      
-      // Note: Due to CORS, this would typically need to be done via an edge function
-      // For now, we'll simulate the update and store the current IP
-      const newIP = currentIP || "Unknown";
-      
-      await Promise.all([
-        saveSetting("noip_last_update", new Date().toISOString()),
-        saveSetting("noip_last_ip", newIP),
-      ]);
-
-      setSettings((prev) => ({
-        ...prev,
-        lastUpdate: new Date().toISOString(),
-        lastIP: newIP,
-      }));
-
-      await supabase.from("audit_logs").insert({
-        user_id: user?.id,
-        action: "UPDATE",
-        resource_type: "noip_ip_update",
-        details: { hostname: settings.hostname, ip: newIP },
-      });
-
+      const newIP = await performIPUpdate();
       toast.success(`IP updated to ${newIP}`);
+      
+      if (settings.autoUpdateEnabled) {
+        startAutoUpdateTimer(settings.updateInterval);
+      }
     } catch (error) {
       console.error("Error updating IP:", error);
       toast.error("Failed to update IP");
     } finally {
       setUpdating(false);
+    }
+  };
+
+  const toggleAutoUpdate = (enabled: boolean) => {
+    setSettings(prev => ({ ...prev, autoUpdateEnabled: enabled }));
+    if (enabled) {
+      toast.success(`Auto-update enabled (every ${settings.updateInterval} minutes)`);
+    } else {
+      toast.info("Auto-update disabled");
     }
   };
 
@@ -231,7 +345,7 @@ export function AdminNoIP() {
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Current Status */}
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div className="rounded-lg border border-border p-4">
               <p className="text-xs text-muted-foreground mb-1">Current Public IP</p>
               <p className="text-lg font-mono font-semibold text-foreground">
@@ -259,6 +373,26 @@ export function AdminNoIP() {
                   ? new Date(settings.lastUpdate).toLocaleString()
                   : "Never"}
               </p>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <p className="text-xs text-muted-foreground mb-1">Auto-Update Status</p>
+              <div className="flex items-center gap-2">
+                {settings.autoUpdateEnabled ? (
+                  <>
+                    <Badge variant="default" className="bg-success">
+                      <Clock className="h-3 w-3 mr-1" />
+                      Active
+                    </Badge>
+                    {timeUntilUpdate && (
+                      <span className="text-sm text-muted-foreground">
+                        Next: {timeUntilUpdate}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <Badge variant="secondary">Disabled</Badge>
+                )}
+              </div>
             </div>
           </div>
 
@@ -332,6 +466,38 @@ export function AdminNoIP() {
             </div>
           </div>
 
+          {/* Auto-Update Toggle */}
+          <div className="flex items-center justify-between p-4 rounded-lg border border-border bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Clock className="h-5 w-5 text-primary" />
+              <div>
+                <p className="font-medium">Automatic IP Updates</p>
+                <p className="text-sm text-muted-foreground">
+                  Automatically update your IP every {settings.updateInterval} minutes
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => toggleAutoUpdate(!settings.autoUpdateEnabled)}
+                disabled={!settings.enabled || !settings.hostname}
+              >
+                {settings.autoUpdateEnabled ? (
+                  <Pause className="h-4 w-4" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+              </Button>
+              <Switch
+                checked={settings.autoUpdateEnabled}
+                onCheckedChange={toggleAutoUpdate}
+                disabled={!settings.enabled || !settings.hostname}
+              />
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex items-center justify-between pt-4 border-t border-border">
             <a
@@ -389,6 +555,7 @@ export function AdminNoIP() {
           <p>2. Create a hostname (e.g., yourname.ddns.net)</p>
           <p>3. Enter your No-IP credentials and hostname above</p>
           <p>4. Enable automatic updates to keep your IP synchronized</p>
+          <p>5. Set the update interval based on how often your IP changes</p>
           <p className="text-warning">
             Note: Free No-IP hostnames require confirmation every 30 days
           </p>

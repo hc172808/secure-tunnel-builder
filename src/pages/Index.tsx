@@ -16,6 +16,7 @@ import { ApiTokenViewer } from "@/components/ApiTokenViewer";
 import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
 import { SyncStatusBadge } from "@/components/SyncStatusBadge";
 import { PeerGroupFilter } from "@/components/PeerGroupFilter";
+import { PeerSearchInput } from "@/components/PeerSearchInput";
 import { BulkPeerImportExport } from "@/components/BulkPeerImportExport";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -98,6 +99,7 @@ export default function Index() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Fetch peers from database
   const fetchPeers = useCallback(async () => {
@@ -216,20 +218,35 @@ export default function Index() {
     }
   }, [user, loading, navigate]);
 
-  // Filter peers based on selected groups
+  // Filter peers based on selected groups and search query
   const filteredPeers = useMemo(() => {
-    if (selectedGroups.length === 0) return peers;
+    let result = peers;
     
-    return peers.filter((peer) => {
-      if (selectedGroups.includes("ungrouped")) {
-        if (!peer.group_id) return true;
-      }
-      if (peer.group_id && selectedGroups.includes(peer.group_id)) {
-        return true;
-      }
-      return false;
-    });
-  }, [peers, selectedGroups]);
+    // Apply group filter
+    if (selectedGroups.length > 0) {
+      result = result.filter((peer) => {
+        if (selectedGroups.includes("ungrouped")) {
+          if (!peer.group_id) return true;
+        }
+        if (peer.group_id && selectedGroups.includes(peer.group_id)) {
+          return true;
+        }
+        return false;
+      });
+    }
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter((peer) => 
+        peer.name.toLowerCase().includes(query) ||
+        peer.allowed_ips.toLowerCase().includes(query) ||
+        peer.public_key.toLowerCase().includes(query)
+      );
+    }
+    
+    return result;
+  }, [peers, selectedGroups, searchQuery]);
 
   const connectedPeers = peers.filter((p) => p.status === "connected").length;
   const filteredConnectedPeers = filteredPeers.filter((p) => p.status === "connected").length;
@@ -506,6 +523,11 @@ export default function Index() {
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <div className="flex items-center gap-3 flex-wrap">
                 <h2 className="text-lg font-semibold text-foreground">Peers</h2>
+                <PeerSearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Search by name, IP, or key..."
+                />
                 <PeerGroupFilter
                   selectedGroups={selectedGroups}
                   onFilterChange={setSelectedGroups}
@@ -513,7 +535,7 @@ export default function Index() {
                 {isAdmin && <BulkPeerImportExport onImportComplete={fetchPeers} />}
               </div>
               <p className="text-sm text-muted-foreground">
-                {selectedGroups.length > 0 
+                {(selectedGroups.length > 0 || searchQuery)
                   ? `${filteredPeers.length} filtered · ${filteredConnectedPeers} online`
                   : `${peers.length} total · ${connectedPeers} online`
                 }

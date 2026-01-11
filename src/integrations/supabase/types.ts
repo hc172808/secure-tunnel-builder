@@ -371,6 +371,7 @@ export type Database = {
           dns: string | null
           endpoint: string | null
           group_id: string | null
+          hostname: string | null
           id: string
           last_handshake: string | null
           name: string
@@ -378,6 +379,7 @@ export type Database = {
           private_key: string | null
           public_key: string
           status: string
+          subdomain: string | null
           transfer_rx: number | null
           transfer_tx: number | null
           updated_at: string
@@ -389,6 +391,7 @@ export type Database = {
           dns?: string | null
           endpoint?: string | null
           group_id?: string | null
+          hostname?: string | null
           id?: string
           last_handshake?: string | null
           name: string
@@ -396,6 +399,7 @@ export type Database = {
           private_key?: string | null
           public_key: string
           status?: string
+          subdomain?: string | null
           transfer_rx?: number | null
           transfer_tx?: number | null
           updated_at?: string
@@ -407,6 +411,7 @@ export type Database = {
           dns?: string | null
           endpoint?: string | null
           group_id?: string | null
+          hostname?: string | null
           id?: string
           last_handshake?: string | null
           name?: string
@@ -414,6 +419,7 @@ export type Database = {
           private_key?: string | null
           public_key?: string
           status?: string
+          subdomain?: string | null
           transfer_rx?: number | null
           transfer_tx?: number | null
           updated_at?: string
