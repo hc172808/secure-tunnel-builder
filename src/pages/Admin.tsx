@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,6 +17,7 @@ import { AdminPeerRequests } from "@/components/admin/AdminPeerRequests";
 import { PeerNotifications } from "@/components/admin/PeerNotifications";
 import { AdminNoIP } from "@/components/admin/AdminNoIP";
 import { AdminPeerGroups } from "@/components/admin/AdminPeerGroups";
+import { AdminNodeDomains } from "@/components/admin/AdminNodeDomains";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -109,6 +110,10 @@ export default function Admin() {
               <Globe className="h-4 w-4" />
               <span className="hidden sm:inline">No-IP</span>
             </TabsTrigger>
+            <TabsTrigger value="domains" className="flex items-center gap-2">
+              <Network className="h-4 w-4" />
+              <span className="hidden sm:inline">Domains</span>
+            </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               <span className="hidden sm:inline">Settings</span>
@@ -153,6 +158,10 @@ export default function Admin() {
 
           <TabsContent value="noip">
             <AdminNoIP />
+          </TabsContent>
+
+          <TabsContent value="domains">
+            <AdminNodeDomains />
           </TabsContent>
 
           <TabsContent value="settings">
