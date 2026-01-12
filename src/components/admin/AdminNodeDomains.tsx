@@ -155,10 +155,13 @@ export function AdminNodeDomains() {
       return;
     }
 
+    if (!settings.baseDomain) {
+      toast.error("Please configure a base domain first");
+      return;
+    }
+
     try {
-      const hostname = settings.baseDomain
-        ? `${subdomain}.${settings.baseDomain}`
-        : subdomain;
+      const hostname = `${subdomain}.${settings.baseDomain}`;
 
       const { error } = await supabase
         .from("wireguard_peers")
@@ -217,10 +220,13 @@ export function AdminNodeDomains() {
   };
 
   const autoAssignSubdomain = async (peer: PeerWithDomain) => {
+    if (!settings.baseDomain) {
+      toast.error("Please configure a base domain first");
+      return;
+    }
+
     const subdomain = generateSubdomainFromName(peer.name);
-    const hostname = settings.baseDomain
-      ? `${subdomain}.${settings.baseDomain}`
-      : subdomain;
+    const hostname = `${subdomain}.${settings.baseDomain}`;
 
     try {
       const { error } = await supabase
@@ -372,7 +378,7 @@ export function AdminNodeDomains() {
                         <span className="font-mono text-sm">{peer.hostname}</span>
                       </div>
                     ) : (
-                      <span className="text-muted-foreground text-sm">Not assigned</span>
+                <span className="text-muted-foreground text-sm">Not assigned</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -386,33 +392,48 @@ export function AdminNodeDomains() {
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          placeholder="subdomain"
-                          value={newSubdomain[peer.id] || ""}
-                          onChange={(e) =>
-                            setNewSubdomain((prev) => ({
-                              ...prev,
-                              [peer.id]: e.target.value,
-                            }))
-                          }
-                          className="w-32 h-8"
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => assignSubdomain(peer.id)}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => autoAssignSubdomain(peer)}
-                          title="Auto-assign from name"
-                        >
-                          <Network className="h-4 w-4" />
-                        </Button>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1">
+                            <Input
+                              placeholder="subdomain"
+                              value={newSubdomain[peer.id] || ""}
+                              onChange={(e) =>
+                                setNewSubdomain((prev) => ({
+                                  ...prev,
+                                  [peer.id]: e.target.value,
+                                }))
+                              }
+                              className="w-24 h-8"
+                            />
+                            {settings.baseDomain && (
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                .{settings.baseDomain}
+                              </span>
+                            )}
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => assignSubdomain(peer.id)}
+                            disabled={!settings.baseDomain}
+                            title={settings.baseDomain ? "Assign subdomain" : "Configure base domain first"}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => autoAssignSubdomain(peer)}
+                            disabled={!settings.baseDomain}
+                            title={settings.baseDomain ? "Auto-assign from name" : "Configure base domain first"}
+                          >
+                            <Network className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {!settings.baseDomain && (
+                          <span className="text-xs text-warning">Set base domain first</span>
+                        )}
                       </div>
                     )}
                   </TableCell>
