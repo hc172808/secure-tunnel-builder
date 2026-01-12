@@ -3,8 +3,8 @@
 #######################################
 # WireGuard VPN Server Installation Script
 # For Ubuntu 22.04 LTS
-# Includes: WireGuard, PostgreSQL, API Sync Service
-# With GitHub Updates and Web UI Integration
+# Includes: WireGuard, PostgreSQL, Node.js API, React Frontend
+# Full Front-end and Back-end Setup with GitHub Integration
 #######################################
 
 set -e
@@ -29,7 +29,9 @@ INSTALL_DIR="/opt/wireguard-manager"
 BACKUP_DIR="/var/backups/wireguard"
 CONFIG_FILE="${INSTALL_DIR}/config.env"
 WEB_DIR="/var/www/wireguard-dashboard"
+API_DIR="${INSTALL_DIR}/api"
 GITHUB_REPO=""
+NODE_VERSION="20"
 
 print_header() {
     echo -e "\n${BLUE}========================================${NC}"
@@ -91,10 +93,19 @@ install_dependencies() {
         certbot \
         python3-certbot-nginx \
         git \
-        nodejs \
-        npm
+        build-essential
+    
+    # Install Node.js LTS
+    print_info "Installing Node.js ${NODE_VERSION}.x..."
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
+    apt-get install -y nodejs
+    
+    # Install PM2 for process management
+    npm install -g pm2
     
     print_success "Dependencies installed"
+    print_info "Node.js version: $(node -v)"
+    print_info "npm version: $(npm -v)"
 }
 
 setup_postgresql() {
@@ -2004,26 +2015,22 @@ print_summary() {
     echo "  ├─ Network: ${WG_NETWORK}"
     echo "  └─ Interface: wg0"
     echo ""
-    echo "Database Connection (for frontend .env file):"
-    echo "  ├─ VITE_LOCAL_DB_HOST=localhost"
-    echo "  ├─ VITE_LOCAL_DB_PORT=5432"
-    echo "  ├─ VITE_LOCAL_DB_NAME=${DB_NAME}"
-    echo "  ├─ VITE_LOCAL_DB_USER=${DB_USER}"
-    echo "  └─ VITE_LOCAL_DB_PASSWORD=${DB_PASSWORD}"
+    echo "Backend API: http://${SERVER_ENDPOINT}:3001"
+    echo "Dashboard: http://${SERVER_ENDPOINT}"
     echo ""
     echo "Server Token (for cloud sync): ${SERVER_TOKEN}"
     echo ""
     echo "Quick Commands:"
-    echo "  ├─ wg-manager status        - Show server status"
-    echo "  ├─ wg-manager peer add NAME - Add new peer"
-    echo "  ├─ wg-manager peer list     - List all peers"
-    echo "  ├─ wg-manager backup        - Create backup"
-    echo "  ├─ wg-manager restore FILE  - Restore from backup"
-    echo "  ├─ wg-manager update        - Pull updates from GitHub"
-    echo "  ├─ wg-manager enable-cloud  - Enable cloud sync"
-    echo "  ├─ wg-manager set-github    - Set GitHub repo for updates"
-    echo "  ├─ wg-manager ssl           - Setup SSL/HTTPS with Let's Encrypt"
-    echo "  └─ wg-manager frontend      - Generate frontend connection config"
+    echo "  ├─ wg-manager status          - Show server status"
+    echo "  ├─ wg-manager peer add NAME   - Add new peer"
+    echo "  ├─ wg-manager peer list       - List all peers"
+    echo "  ├─ wg-noip configure          - Setup No-IP DNS updates"
+    echo "  ├─ wg-subdomain configure     - Setup node subdomains"
+    echo "  ├─ wg-backup                  - Create backup"
+    echo "  ├─ wg-restore FILE            - Restore from backup"
+    echo "  ├─ wg-manager update          - Pull updates from GitHub"
+    echo "  ├─ wg-manager ssl             - Setup SSL/HTTPS with Let's Encrypt"
+    echo "  └─ wg-manager frontend        - Generate frontend connection config"
     echo ""
     echo "Config file: ${CONFIG_FILE}"
     echo "Backups: ${BACKUP_DIR}"
@@ -2034,6 +2041,607 @@ print_summary() {
     echo "To access the dashboard, visit: http://${SERVER_ENDPOINT}"
     echo "To enable HTTPS, run: wg-manager ssl"
     echo ""
+}
+setup_backend_api() {
+    print_header "Setting Up Backend API Server"
+    
+    mkdir -p ${API_DIR}
+    
+    # Create package.json for API
+    cat > ${API_DIR}/package.json <<'PKGEOF'
+{
+  "name": "wireguard-api",
+  "version": "1.0.0",
+  "description": "WireGuard Manager Backend API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "pg": "^8.11.3",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2"
+  }
+}
+PKGEOF
+    
+    # Create the API server
+    cat > ${API_DIR}/server.js <<'APIEOF'
+require('dotenv').config({ path: '/opt/wireguard-manager/config.env' });
+const express = require('express');
+const cors = require('cors');
+const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { exec } = require('child_process');
+const { WebSocketServer } = require('ws');
+const http = require('http');
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+const pool = new Pool({
+  host: process.env.DB_HOST || 'localhost',
+  port: 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+});
+
+const JWT_SECRET = process.env.SERVER_TOKEN || 'default-secret';
+
+app.use(cors());
+app.use(express.json());
+
+// Auth middleware
+const authMiddleware = async (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+// Admin check middleware
+const adminMiddleware = async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT role FROM user_roles WHERE user_id = $1',
+      [req.user.id]
+    );
+    if (rows.some(r => r.role === 'admin')) {
+      next();
+    } else {
+      res.status(403).json({ error: 'Admin access required' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Database error' });
+  }
+};
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Login
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM profiles WHERE username = $1',
+      [email]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    const user = rows[0];
+    
+    if (user.is_disabled) {
+      return res.status(401).json({ error: 'Account is disabled' });
+    }
+    
+    const token = jwt.sign(
+      { id: user.user_id, email: user.username },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({ token, user: { id: user.user_id, email: user.username, name: user.display_name } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get server status
+app.get('/status', authMiddleware, async (req, res) => {
+  try {
+    const { rows: settings } = await pool.query('SELECT * FROM server_settings');
+    const { rows: peers } = await pool.query('SELECT * FROM wireguard_peers');
+    
+    res.json({
+      settings: settings.reduce((acc, s) => ({ ...acc, [s.setting_key]: s.setting_value }), {}),
+      peers,
+      uptime: process.uptime()
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get peers
+app.get('/peers', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT wp.*, pg.name as group_name, pg.color as group_color
+      FROM wireguard_peers wp
+      LEFT JOIN peer_groups pg ON wp.group_id = pg.id
+      ORDER BY wp.created_at DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create peer
+app.post('/peers', authMiddleware, adminMiddleware, async (req, res) => {
+  const { name, group_id } = req.body;
+  
+  try {
+    // Generate keys using wg CLI
+    const { stdout: privateKey } = await new Promise((resolve, reject) => {
+      exec('wg genkey', (err, stdout) => {
+        if (err) reject(err);
+        else resolve({ stdout: stdout.trim() });
+      });
+    });
+    
+    const { stdout: publicKey } = await new Promise((resolve, reject) => {
+      exec(`echo "${privateKey}" | wg pubkey`, (err, stdout) => {
+        if (err) reject(err);
+        else resolve({ stdout: stdout.trim() });
+      });
+    });
+    
+    // Get next available IP
+    const { rows: lastPeer } = await pool.query(`
+      SELECT allowed_ips FROM wireguard_peers 
+      WHERE allowed_ips LIKE '10.0.0.%'
+      ORDER BY created_at DESC LIMIT 1
+    `);
+    
+    let nextIP = '10.0.0.2';
+    if (lastPeer.length > 0) {
+      const lastOctet = parseInt(lastPeer[0].allowed_ips.split('.')[3].split('/')[0]);
+      nextIP = `10.0.0.${lastOctet + 1}`;
+    }
+    
+    // Check subdomain settings
+    const { rows: settings } = await pool.query(`
+      SELECT setting_key, setting_value FROM server_settings 
+      WHERE setting_key IN ('node_domain_enabled', 'node_base_domain')
+    `);
+    
+    const config = settings.reduce((acc, s) => ({ ...acc, [s.setting_key]: s.setting_value }), {});
+    let subdomain = null;
+    let hostname = null;
+    
+    if (config.node_domain_enabled === 'true' && config.node_base_domain) {
+      subdomain = name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      hostname = `${subdomain}.${config.node_base_domain}`;
+    }
+    
+    // Insert into database
+    const { rows } = await pool.query(`
+      INSERT INTO wireguard_peers (name, public_key, private_key, allowed_ips, dns, group_id, subdomain, hostname, created_by)
+      VALUES ($1, $2, $3, $4, '1.1.1.1', $5, $6, $7, $8)
+      RETURNING *
+    `, [name, publicKey, privateKey, `${nextIP}/32`, group_id, subdomain, hostname, req.user.id]);
+    
+    // Add to WireGuard
+    exec(`wg set wg0 peer ${publicKey} allowed-ips ${nextIP}/32 && wg-quick save wg0`);
+    
+    // Broadcast to WebSocket clients
+    broadcastUpdate('peer_created', rows[0]);
+    
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete peer
+app.delete('/peers/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM wireguard_peers WHERE id = $1', [req.params.id]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Peer not found' });
+    }
+    
+    const peer = rows[0];
+    
+    // Remove from WireGuard
+    exec(`wg set wg0 peer ${peer.public_key} remove && wg-quick save wg0`);
+    
+    // Delete from database
+    await pool.query('DELETE FROM wireguard_peers WHERE id = $1', [req.params.id]);
+    
+    broadcastUpdate('peer_deleted', { id: req.params.id });
+    
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update peer
+app.put('/peers/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  const { name, group_id, subdomain } = req.body;
+  
+  try {
+    // Get base domain for hostname
+    const { rows: settings } = await pool.query(`
+      SELECT setting_value FROM server_settings WHERE setting_key = 'node_base_domain'
+    `);
+    
+    const baseDomain = settings[0]?.setting_value;
+    const hostname = subdomain && baseDomain ? `${subdomain}.${baseDomain}` : null;
+    
+    const { rows } = await pool.query(`
+      UPDATE wireguard_peers 
+      SET name = COALESCE($1, name),
+          group_id = $2,
+          subdomain = $3,
+          hostname = $4,
+          updated_at = NOW()
+      WHERE id = $5
+      RETURNING *
+    `, [name, group_id, subdomain, hostname, req.params.id]);
+    
+    broadcastUpdate('peer_updated', rows[0]);
+    
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get peer groups
+app.get('/peer-groups', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM peer_groups ORDER BY name');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get server settings
+app.get('/settings', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM server_settings');
+    res.json(rows.reduce((acc, s) => ({ ...acc, [s.setting_key]: s.setting_value }), {}));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update server settings
+app.put('/settings', authMiddleware, adminMiddleware, async (req, res) => {
+  const settings = req.body;
+  
+  try {
+    for (const [key, value] of Object.entries(settings)) {
+      await pool.query(`
+        INSERT INTO server_settings (setting_key, setting_value, updated_at, updated_by)
+        VALUES ($1, $2, NOW(), $3)
+        ON CONFLICT (setting_key) DO UPDATE SET
+          setting_value = EXCLUDED.setting_value,
+          updated_at = NOW(),
+          updated_by = EXCLUDED.updated_by
+      `, [key, value, req.user.id]);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// NoIP update endpoint
+app.post('/noip/update', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { rows: settings } = await pool.query(`
+      SELECT setting_key, setting_value FROM server_settings 
+      WHERE setting_key IN ('noip_username', 'noip_password', 'noip_hostname')
+    `);
+    
+    const config = settings.reduce((acc, s) => ({ ...acc, [s.setting_key]: s.setting_value }), {});
+    
+    if (!config.noip_username || !config.noip_password || !config.noip_hostname) {
+      return res.status(400).json({ error: 'NoIP not configured' });
+    }
+    
+    // Get current public IP
+    const { stdout: currentIP } = await new Promise((resolve, reject) => {
+      exec('curl -s https://api.ipify.org', (err, stdout) => {
+        if (err) reject(err);
+        else resolve({ stdout: stdout.trim() });
+      });
+    });
+    
+    // Call No-IP API
+    const auth = Buffer.from(`${config.noip_username}:${config.noip_password}`).toString('base64');
+    const response = await fetch(
+      `https://dynupdate.no-ip.com/nic/update?hostname=${config.noip_hostname}&myip=${currentIP}`,
+      {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'User-Agent': 'WireGuard-Manager/1.0'
+        }
+      }
+    );
+    
+    const result = await response.text();
+    
+    // Update settings with result
+    await pool.query(`
+      INSERT INTO server_settings (setting_key, setting_value, updated_at)
+      VALUES ('noip_last_ip', $1, NOW()),
+             ('noip_last_update', $2, NOW()),
+             ('noip_last_response', $3, NOW())
+      ON CONFLICT (setting_key) DO UPDATE SET
+        setting_value = EXCLUDED.setting_value,
+        updated_at = NOW()
+    `, [currentIP, new Date().toISOString(), result]);
+    
+    res.json({ success: true, ip: currentIP, response: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Subdomain management
+app.post('/subdomains/assign', authMiddleware, adminMiddleware, async (req, res) => {
+  const { peer_id, subdomain } = req.body;
+  
+  try {
+    const { rows: settings } = await pool.query(`
+      SELECT setting_value FROM server_settings WHERE setting_key = 'node_base_domain'
+    `);
+    
+    const baseDomain = settings[0]?.setting_value;
+    
+    if (!baseDomain) {
+      return res.status(400).json({ error: 'Base domain not configured' });
+    }
+    
+    const hostname = `${subdomain}.${baseDomain}`;
+    
+    const { rows } = await pool.query(`
+      UPDATE wireguard_peers 
+      SET subdomain = $1, hostname = $2, updated_at = NOW()
+      WHERE id = $3
+      RETURNING *
+    `, [subdomain, hostname, peer_id]);
+    
+    broadcastUpdate('peer_updated', rows[0]);
+    
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Traffic stats
+app.get('/traffic-stats', authMiddleware, async (req, res) => {
+  const hours = parseInt(req.query.hours) || 24;
+  
+  try {
+    const { rows } = await pool.query(`
+      SELECT * FROM traffic_stats
+      WHERE recorded_at >= NOW() - INTERVAL '${hours} hours'
+      ORDER BY recorded_at ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Audit logs
+app.get('/audit-logs', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// WebSocket broadcast function
+function broadcastUpdate(type, data) {
+  const message = JSON.stringify({ type, data, timestamp: new Date().toISOString() });
+  wss.clients.forEach(client => {
+    if (client.readyState === 1) {
+      client.send(message);
+    }
+  });
+}
+
+// WebSocket connection handler
+wss.on('connection', (ws) => {
+  console.log('WebSocket client connected');
+  ws.on('close', () => console.log('WebSocket client disconnected'));
+});
+
+const PORT = process.env.API_PORT || 3001;
+server.listen(PORT, () => {
+  console.log(`API server running on port ${PORT}`);
+});
+APIEOF
+    
+    # Install dependencies
+    cd ${API_DIR}
+    npm install
+    
+    # Create PM2 ecosystem file
+    cat > ${API_DIR}/ecosystem.config.js <<'PM2EOF'
+module.exports = {
+  apps: [{
+    name: 'wireguard-api',
+    script: 'server.js',
+    cwd: '/opt/wireguard-manager/api',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '256M',
+    env: {
+      NODE_ENV: 'production'
+    }
+  }]
+};
+PM2EOF
+    
+    # Start API with PM2
+    pm2 start ${API_DIR}/ecosystem.config.js
+    pm2 save
+    pm2 startup systemd -u root --hp /root
+    
+    print_success "Backend API server installed and running on port 3001"
+}
+
+setup_frontend() {
+    print_header "Setting Up Frontend Dashboard"
+    
+    mkdir -p ${WEB_DIR}
+    
+    # Check if GitHub repo is provided
+    if [ -n "${GITHUB_REPO}" ]; then
+        print_info "Cloning frontend from GitHub..."
+        git clone ${GITHUB_REPO} ${WEB_DIR}
+        cd ${WEB_DIR}
+        npm install
+        npm run build
+    else
+        # Create a basic placeholder page
+        mkdir -p ${WEB_DIR}/dist
+        cat > ${WEB_DIR}/dist/index.html <<'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WireGuard Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            max-width: 600px;
+        }
+        h1 { font-size: 2.5rem; margin-bottom: 20px; color: #4ade80; }
+        p { color: #94a3b8; margin-bottom: 15px; line-height: 1.6; }
+        .status { 
+            display: inline-flex; 
+            align-items: center; 
+            gap: 8px;
+            background: rgba(74, 222, 128, 0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin-bottom: 30px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #4ade80;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        code {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .commands {
+            text-align: left;
+            background: rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .commands code {
+            display: block;
+            margin: 8px 0;
+            padding: 8px;
+            background: rgba(255,255,255,0.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status">
+            <span class="status-dot"></span>
+            <span>Server Running</span>
+        </div>
+        <h1>🔐 WireGuard Manager</h1>
+        <p>Your WireGuard VPN server is installed and running!</p>
+        <p>To deploy the full dashboard, set up your GitHub repository:</p>
+        <div class="commands">
+            <p><strong>Commands:</strong></p>
+            <code>wg-manager set-github</code>
+            <code>wg-manager update</code>
+            <p style="margin-top: 15px;"><strong>Or use CLI:</strong></p>
+            <code>wg-manager status</code>
+            <code>wg-manager peer add &lt;name&gt;</code>
+            <code>wg-noip configure</code>
+            <code>wg-subdomain configure</code>
+        </div>
+    </div>
+</body>
+</html>
+HTMLEOF
+        print_info "Placeholder page created. Deploy full UI with: wg-manager set-github && wg-manager update"
+    fi
+    
+    print_success "Frontend setup complete"
 }
 
 # Main installation
@@ -2048,7 +2656,30 @@ main() {
     create_config
     create_api_sync_service
     create_cli_wrapper
+    setup_backend_api
+    setup_frontend
     setup_nginx
+    
+    echo ""
+    read -p "Would you like to set up a GitHub repository for the dashboard? (yes/no): " setup_github
+    if [ "$setup_github" = "yes" ]; then
+        read -p "Enter GitHub repository URL: " github_url
+        sed -i "s|GITHUB_REPO=.*|GITHUB_REPO=\"${github_url}\"|" ${CONFIG_FILE}
+        GITHUB_REPO="${github_url}"
+        /usr/local/bin/wg-update
+    fi
+    
+    echo ""
+    read -p "Would you like to configure node subdomains? (yes/no): " setup_subdomains
+    if [ "$setup_subdomains" = "yes" ]; then
+        /usr/local/bin/wg-subdomain configure
+    fi
+    
+    echo ""
+    read -p "Would you like to configure No-IP DNS? (yes/no): " setup_noip
+    if [ "$setup_noip" = "yes" ]; then
+        /usr/local/bin/wg-noip configure
+    fi
     
     echo ""
     read -p "Would you like to create an admin user now? (yes/no): " create_admin
@@ -2057,7 +2688,7 @@ main() {
     fi
     
     echo ""
-    read -p "Would you like to setup SSL/HTTPS with Let's Encrypt? (yes/no): " setup_ssl_choice
+    read -p "Would you like to set up SSL/HTTPS now? (yes/no): " setup_ssl_choice
     if [ "$setup_ssl_choice" = "yes" ]; then
         setup_ssl
     fi
