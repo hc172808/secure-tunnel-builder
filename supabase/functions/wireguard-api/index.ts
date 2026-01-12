@@ -216,6 +216,31 @@ Deno.serve(async (req) => {
 
       const body = await req.json() as WireGuardPeer
 
+      // Check if auto-subdomain assignment is enabled
+      let subdomain: string | null = null
+      let hostname: string | null = null
+      
+      const { data: domainSettings } = await supabase
+        .from('server_settings')
+        .select('setting_key, setting_value')
+        .in('setting_key', ['node_domain_enabled', 'node_base_domain'])
+      
+      const domainConfig: Record<string, string> = {}
+      domainSettings?.forEach(s => {
+        domainConfig[s.setting_key] = s.setting_value
+      })
+      
+      if (domainConfig.node_domain_enabled === 'true' && domainConfig.node_base_domain) {
+        // Generate subdomain from peer name
+        subdomain = body.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '')
+        
+        hostname = `${subdomain}.${domainConfig.node_base_domain}`
+      }
+
       const { data, error } = await supabase
         .from('wireguard_peers')
         .insert({
@@ -225,7 +250,9 @@ Deno.serve(async (req) => {
           allowed_ips: body.allowed_ips,
           dns: body.dns || '1.1.1.1',
           persistent_keepalive: body.persistent_keepalive || 25,
-          created_by: userId
+          created_by: userId,
+          subdomain,
+          hostname
         })
         .select()
         .single()
@@ -238,7 +265,14 @@ Deno.serve(async (req) => {
         action: 'create',
         resource_type: 'peer',
         resource_id: data.id,
-        details: { name: body.name }
+        details: { name: body.name, subdomain, hostname }
+      })
+      
+      // Create notification for new peer
+      await supabase.from('peer_notifications').insert({
+        peer_id: data.id,
+        peer_name: body.name,
+        event_type: 'peer_created'
       })
 
       return new Response(JSON.stringify(data), {

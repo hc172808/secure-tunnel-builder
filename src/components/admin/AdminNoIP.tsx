@@ -79,27 +79,62 @@ export function AdminNoIP() {
   }, [user?.id]);
 
   const performIPUpdate = useCallback(async () => {
-    const newIP = await fetchCurrentIP() || "Unknown";
-    
-    await Promise.all([
-      saveSetting("noip_last_update", new Date().toISOString()),
-      saveSetting("noip_last_ip", newIP),
-    ]);
+    // Use the edge function for real No-IP API integration
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/noip-update/update`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({}),
+        }
+      );
+      
+      const result = await response.json();
+      
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || result.error || 'Failed to update No-IP');
+      }
+      
+      const newIP = result.ip || "Unknown";
+      
+      setSettings((prev) => ({
+        ...prev,
+        lastUpdate: new Date().toISOString(),
+        lastIP: newIP,
+      }));
+      
+      return newIP;
+    } catch (error) {
+      // Fallback: just update local records
+      const newIP = await fetchCurrentIP() || "Unknown";
+      
+      await Promise.all([
+        saveSetting("noip_last_update", new Date().toISOString()),
+        saveSetting("noip_last_ip", newIP),
+      ]);
 
-    setSettings((prev) => ({
-      ...prev,
-      lastUpdate: new Date().toISOString(),
-      lastIP: newIP,
-    }));
+      setSettings((prev) => ({
+        ...prev,
+        lastUpdate: new Date().toISOString(),
+        lastIP: newIP,
+      }));
 
-    await supabase.from("audit_logs").insert({
-      user_id: user?.id,
-      action: "UPDATE",
-      resource_type: "noip_ip_update",
-      details: { ip: newIP, auto: true },
-    });
+      await supabase.from("audit_logs").insert({
+        user_id: user?.id,
+        action: "UPDATE",
+        resource_type: "noip_ip_update",
+        details: { ip: newIP, auto: true, fallback: true },
+      });
 
-    return newIP;
+      throw error;
+    }
   }, [saveSetting, user?.id]);
 
   const startAutoUpdateTimer = useCallback((intervalMinutes: number) => {
@@ -287,14 +322,15 @@ export function AdminNoIP() {
     setUpdating(true);
     try {
       const newIP = await performIPUpdate();
-      toast.success(`IP updated to ${newIP}`);
+      toast.success(`IP updated to ${newIP} via No-IP API`);
       
       if (settings.autoUpdateEnabled) {
         startAutoUpdateTimer(settings.updateInterval);
       }
     } catch (error) {
       console.error("Error updating IP:", error);
-      toast.error("Failed to update IP");
+      const message = error instanceof Error ? error.message : "Failed to update IP";
+      toast.error(message);
     } finally {
       setUpdating(false);
     }
