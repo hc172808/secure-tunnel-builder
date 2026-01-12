@@ -164,6 +164,8 @@ CREATE TABLE IF NOT EXISTS wireguard_peers (
     transfer_rx BIGINT DEFAULT 0,
     transfer_tx BIGINT DEFAULT 0,
     group_id UUID REFERENCES peer_groups(id) ON DELETE SET NULL,
+    subdomain TEXT,
+    hostname TEXT,
     created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -442,6 +444,24 @@ echo "$peers" | jq -c '.[]' | while read peer; do
     " 2>/dev/null
 done
 
+    # Check if auto-subdomain is enabled and assign hostname
+    local subdomain=""
+    local hostname=""
+    
+    node_domain_enabled=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = 'node_domain_enabled';
+    " 2>/dev/null | tr -d ' ')
+    
+    base_domain=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = 'node_base_domain';
+    " 2>/dev/null | tr -d ' ')
+    
+    if [ "${node_domain_enabled}" = "true" ] && [ -n "${base_domain}" ]; then
+        subdomain=$(echo "${name}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//' | sed 's/-$//')
+        hostname="${subdomain}.${base_domain}"
+        echo "Auto-assigned hostname: ${hostname}"
+    fi
+    
 echo "$(date): Sync completed" >> /var/log/wg-sync.log
 SYNCEOF
     
@@ -476,20 +496,49 @@ get_next_ip() {
 
 add_peer() {
     local name=$1
+    local group_name=$2
     local private_key=$(wg genkey)
     local public_key=$(echo "$private_key" | wg pubkey)
     local peer_ip=$(get_next_ip)
     local server_public_key=$(wg show ${WG_INTERFACE} public-key)
     
+    # Get group_id if group_name provided
+    local group_id=""
+    if [ -n "$group_name" ]; then
+        group_id=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+            SELECT id FROM peer_groups WHERE name = '${group_name}';
+        " | tr -d ' ')
+    fi
+    
+    # Check if auto-subdomain is enabled
+    local subdomain=""
+    local hostname=""
+    
+    node_domain_enabled=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = 'node_domain_enabled';
+    " 2>/dev/null | tr -d ' ')
+    
+    base_domain=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = 'node_base_domain';
+    " 2>/dev/null | tr -d ' ')
+    
+    if [ "${node_domain_enabled}" = "true" ] && [ -n "${base_domain}" ]; then
+        subdomain=$(echo "${name}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//' | sed 's/-$//')
+        hostname="${subdomain}.${base_domain}"
+    fi
+    
     # Add to WireGuard
     wg set ${WG_INTERFACE} peer ${public_key} allowed-ips ${peer_ip}/32
     wg-quick save ${WG_INTERFACE}
     
-    # Add to database
+    # Add to database with group, subdomain and hostname
     export PGPASSWORD="${DB_PASSWORD}"
     peer_id=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
-        INSERT INTO wireguard_peers (name, public_key, private_key, allowed_ips, dns)
-        VALUES ('${name}', '${public_key}', '${private_key}', '${peer_ip}/32', '1.1.1.1')
+        INSERT INTO wireguard_peers (name, public_key, private_key, allowed_ips, dns, group_id, subdomain, hostname)
+        VALUES ('${name}', '${public_key}', '${private_key}', '${peer_ip}/32', '1.1.1.1', 
+                $([ -n "$group_id" ] && echo "'${group_id}'" || echo "NULL"),
+                $([ -n "$subdomain" ] && echo "'${subdomain}'" || echo "NULL"),
+                $([ -n "$hostname" ] && echo "'${hostname}'" || echo "NULL"))
         RETURNING id;
     " | tr -d ' ')
     
@@ -657,6 +706,463 @@ esac
 PEEREOF
     
     chmod +x ${INSTALL_DIR}/manage-peer.sh
+    
+    # Create No-IP update script
+    cat > ${INSTALL_DIR}/noip-update.sh <<'NOIPEOF'
+#!/bin/bash
+
+source /opt/wireguard-manager/config.env
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Get current public IP
+get_current_ip() {
+    curl -s https://api.ipify.org 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null || echo ""
+}
+
+# Get No-IP settings from database
+get_noip_setting() {
+    local key=$1
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = '${key}';
+    " 2>/dev/null | tr -d ' '
+}
+
+# Save No-IP setting to database
+save_noip_setting() {
+    local key=$1
+    local value=$2
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        INSERT INTO server_settings (setting_key, setting_value, updated_at)
+        VALUES ('${key}', '${value}', NOW())
+        ON CONFLICT (setting_key) DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = NOW();
+    " 2>/dev/null
+}
+
+# Update No-IP DNS
+update_noip() {
+    local noip_enabled=$(get_noip_setting "noip_enabled")
+    local noip_username=$(get_noip_setting "noip_username")
+    local noip_password=$(get_noip_setting "noip_password")
+    local noip_hostname=$(get_noip_setting "noip_hostname")
+    local last_ip=$(get_noip_setting "noip_last_ip")
+    
+    if [ "${noip_enabled}" != "true" ]; then
+        echo -e "${YELLOW}No-IP is disabled${NC}"
+        return 1
+    fi
+    
+    if [ -z "${noip_username}" ] || [ -z "${noip_password}" ] || [ -z "${noip_hostname}" ]; then
+        echo -e "${RED}No-IP credentials not configured${NC}"
+        return 1
+    fi
+    
+    local current_ip=$(get_current_ip)
+    
+    if [ -z "${current_ip}" ]; then
+        echo -e "${RED}Failed to detect current IP${NC}"
+        return 1
+    fi
+    
+    echo "Current IP: ${current_ip}"
+    echo "Last IP: ${last_ip:-None}"
+    
+    # Check if IP has changed
+    if [ "${current_ip}" = "${last_ip}" ]; then
+        echo -e "${YELLOW}IP has not changed, skipping update${NC}"
+        save_noip_setting "noip_last_update" "$(date -Iseconds)"
+        return 0
+    fi
+    
+    echo "Updating No-IP hostname: ${noip_hostname}..."
+    
+    # Call No-IP Dynamic Update API
+    local response=$(curl -s -u "${noip_username}:${noip_password}" \
+        -A "WireGuard-Manager/1.0 admin@wireguard-manager.local" \
+        "https://dynupdate.no-ip.com/nic/update?hostname=${noip_hostname}&myip=${current_ip}")
+    
+    echo "Response: ${response}"
+    
+    # Parse response
+    local response_code=$(echo "${response}" | awk '{print $1}')
+    
+    case "${response_code}" in
+        good|nochg)
+            echo -e "${GREEN}✓ No-IP updated successfully!${NC}"
+            save_noip_setting "noip_last_ip" "${current_ip}"
+            save_noip_setting "noip_last_update" "$(date -Iseconds)"
+            save_noip_setting "noip_last_response" "${response}"
+            return 0
+            ;;
+        nohost)
+            echo -e "${RED}✗ Hostname not found${NC}"
+            ;;
+        badauth)
+            echo -e "${RED}✗ Invalid username/password${NC}"
+            ;;
+        badagent)
+            echo -e "${RED}✗ Client blocked by No-IP${NC}"
+            ;;
+        abuse)
+            echo -e "${RED}✗ Hostname blocked due to abuse${NC}"
+            ;;
+        911)
+            echo -e "${RED}✗ No-IP server error${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}Unknown response: ${response}${NC}"
+            ;;
+    esac
+    
+    save_noip_setting "noip_last_response" "${response}"
+    return 1
+}
+
+# Status check
+check_status() {
+    local noip_enabled=$(get_noip_setting "noip_enabled")
+    local noip_hostname=$(get_noip_setting "noip_hostname")
+    local last_ip=$(get_noip_setting "noip_last_ip")
+    local last_update=$(get_noip_setting "noip_last_update")
+    local auto_update=$(get_noip_setting "noip_auto_update_enabled")
+    local interval=$(get_noip_setting "noip_update_interval")
+    local current_ip=$(get_current_ip)
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                   No-IP DNS Status                           ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Enabled:       ${noip_enabled:-false}"
+    echo "║  Hostname:      ${noip_hostname:-Not configured}"
+    echo "║  Current IP:    ${current_ip:-Unknown}"
+    echo "║  Last IP:       ${last_ip:-Never updated}"
+    echo "║  Last Update:   ${last_update:-Never}"
+    echo "║  Auto Update:   ${auto_update:-false}"
+    echo "║  Interval:      ${interval:-30} minutes"
+    if [ "${current_ip}" != "${last_ip}" ] && [ -n "${last_ip}" ]; then
+        echo "║  ⚠ IP has changed! Run 'wg-noip update' to sync"
+    fi
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+# Configure No-IP
+configure() {
+    echo "No-IP Configuration"
+    echo "==================="
+    
+    read -p "No-IP Username/Email: " username
+    read -s -p "No-IP Password: " password
+    echo ""
+    read -p "Hostname (e.g., yourname.ddns.net): " hostname
+    read -p "Update interval in minutes [30]: " interval
+    interval=${interval:-30}
+    read -p "Enable auto-update? (yes/no) [yes]: " auto_update
+    auto_update=${auto_update:-yes}
+    
+    save_noip_setting "noip_enabled" "true"
+    save_noip_setting "noip_username" "${username}"
+    save_noip_setting "noip_password" "${password}"
+    save_noip_setting "noip_hostname" "${hostname}"
+    save_noip_setting "noip_update_interval" "${interval}"
+    save_noip_setting "noip_auto_update_enabled" "$([ "${auto_update}" = "yes" ] && echo "true" || echo "false")"
+    
+    echo ""
+    echo -e "${GREEN}✓ No-IP configured successfully!${NC}"
+    echo "Running initial update..."
+    update_noip
+    
+    # Setup cron job if auto-update enabled
+    if [ "${auto_update}" = "yes" ]; then
+        setup_cron "${interval}"
+    fi
+}
+
+# Setup cron job
+setup_cron() {
+    local interval=$1
+    
+    # Remove existing cron
+    crontab -l 2>/dev/null | grep -v "noip-update.sh" | crontab -
+    
+    # Add new cron
+    (crontab -l 2>/dev/null; echo "*/${interval} * * * * ${INSTALL_DIR}/noip-update.sh update >> /var/log/noip-update.log 2>&1") | crontab -
+    
+    echo -e "${GREEN}✓ Auto-update cron job configured (every ${interval} minutes)${NC}"
+}
+
+# Disable cron
+disable_cron() {
+    crontab -l 2>/dev/null | grep -v "noip-update.sh" | crontab -
+    echo "Auto-update disabled"
+}
+
+case "$1" in
+    update)
+        update_noip
+        ;;
+    status)
+        check_status
+        ;;
+    configure)
+        configure
+        ;;
+    enable)
+        save_noip_setting "noip_enabled" "true"
+        echo "No-IP enabled"
+        ;;
+    disable)
+        save_noip_setting "noip_enabled" "false"
+        disable_cron
+        echo "No-IP disabled"
+        ;;
+    cron)
+        interval=${2:-30}
+        setup_cron "${interval}"
+        ;;
+    *)
+        echo "Usage: $0 {update|status|configure|enable|disable|cron [interval]}"
+        echo ""
+        echo "Commands:"
+        echo "  update      Update No-IP DNS record with current IP"
+        echo "  status      Show No-IP configuration status"
+        echo "  configure   Interactive setup wizard"
+        echo "  enable      Enable No-IP updates"
+        echo "  disable     Disable No-IP updates"
+        echo "  cron [min]  Setup auto-update cron job (default: 30 min)"
+        ;;
+esac
+NOIPEOF
+    
+    chmod +x ${INSTALL_DIR}/noip-update.sh
+    
+    # Create subdomain management script
+    cat > ${INSTALL_DIR}/subdomain.sh <<'SUBDOMAINEOF'
+#!/bin/bash
+
+source /opt/wireguard-manager/config.env
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Get setting from database
+get_setting() {
+    local key=$1
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = '${key}';
+    " 2>/dev/null | tr -d ' '
+}
+
+# Save setting to database
+save_setting() {
+    local key=$1
+    local value=$2
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        INSERT INTO server_settings (setting_key, setting_value, updated_at)
+        VALUES ('${key}', '${value}', NOW())
+        ON CONFLICT (setting_key) DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = NOW();
+    " 2>/dev/null
+}
+
+# Generate subdomain from name
+generate_subdomain() {
+    local name=$1
+    echo "${name}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//' | sed 's/-$//'
+}
+
+# Assign subdomain to peer
+assign_subdomain() {
+    local peer_name=$1
+    local subdomain=${2:-$(generate_subdomain "${peer_name}")}
+    local base_domain=$(get_setting "node_base_domain")
+    
+    if [ -z "${base_domain}" ]; then
+        echo -e "${RED}Base domain not configured. Run: $0 configure${NC}"
+        return 1
+    fi
+    
+    local hostname="${subdomain}.${base_domain}"
+    
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        UPDATE wireguard_peers 
+        SET subdomain = '${subdomain}', hostname = '${hostname}', updated_at = NOW()
+        WHERE name = '${peer_name}';
+    "
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Assigned ${hostname} to peer ${peer_name}${NC}"
+    else
+        echo -e "${RED}✗ Failed to assign subdomain${NC}"
+    fi
+}
+
+# Remove subdomain from peer
+remove_subdomain() {
+    local peer_name=$1
+    
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        UPDATE wireguard_peers 
+        SET subdomain = NULL, hostname = NULL, updated_at = NOW()
+        WHERE name = '${peer_name}';
+    "
+    
+    echo "Subdomain removed from peer ${peer_name}"
+}
+
+# List all peer subdomains
+list_subdomains() {
+    export PGPASSWORD="${DB_PASSWORD}"
+    echo ""
+    echo "Peer Subdomain Assignments:"
+    echo "==========================="
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        SELECT name, 
+               COALESCE(hostname, 'Not assigned') as hostname,
+               allowed_ips,
+               status
+        FROM wireguard_peers 
+        ORDER BY name;
+    "
+}
+
+# Auto-assign subdomains to all peers without one
+auto_assign_all() {
+    local base_domain=$(get_setting "node_base_domain")
+    
+    if [ -z "${base_domain}" ]; then
+        echo -e "${RED}Base domain not configured. Run: $0 configure${NC}"
+        return 1
+    fi
+    
+    export PGPASSWORD="${DB_PASSWORD}"
+    local peers=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT name FROM wireguard_peers WHERE hostname IS NULL;
+    ")
+    
+    while read -r peer_name; do
+        peer_name=$(echo "${peer_name}" | tr -d ' ')
+        if [ -n "${peer_name}" ]; then
+            assign_subdomain "${peer_name}"
+        fi
+    done <<< "${peers}"
+    
+    echo ""
+    echo -e "${GREEN}✓ Auto-assignment complete${NC}"
+}
+
+# Configure subdomain settings
+configure() {
+    echo "Node Domain Configuration"
+    echo "========================="
+    
+    read -p "Base domain (e.g., nodes.example.com): " base_domain
+    read -p "Enable auto-assignment for new peers? (yes/no) [yes]: " auto_assign
+    auto_assign=${auto_assign:-yes}
+    read -p "IP range start [10.0.0.2]: " ip_start
+    ip_start=${ip_start:-10.0.0.2}
+    read -p "IP range end [10.0.0.254]: " ip_end
+    ip_end=${ip_end:-10.0.0.254}
+    
+    save_setting "node_base_domain" "${base_domain}"
+    save_setting "node_domain_enabled" "$([ "${auto_assign}" = "yes" ] && echo "true" || echo "false")"
+    save_setting "node_ip_range_start" "${ip_start}"
+    save_setting "node_ip_range_end" "${ip_end}"
+    
+    echo ""
+    echo -e "${GREEN}✓ Node domain configured!${NC}"
+    echo ""
+    echo "DNS Setup Required:"
+    echo "  Add a wildcard A record: *.${base_domain} -> Your Server IP"
+    echo ""
+}
+
+# Show status
+show_status() {
+    local enabled=$(get_setting "node_domain_enabled")
+    local base_domain=$(get_setting "node_base_domain")
+    local ip_start=$(get_setting "node_ip_range_start")
+    local ip_end=$(get_setting "node_ip_range_end")
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                Node Domain Configuration                      ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Auto-assign:   ${enabled:-false}"
+    echo "║  Base Domain:   ${base_domain:-Not configured}"
+    echo "║  IP Range:      ${ip_start:-10.0.0.2} - ${ip_end:-10.0.0.254}"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+case "$1" in
+    assign)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 assign <peer_name> [subdomain]"
+            exit 1
+        fi
+        assign_subdomain "$2" "$3"
+        ;;
+    remove)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 remove <peer_name>"
+            exit 1
+        fi
+        remove_subdomain "$2"
+        ;;
+    list)
+        list_subdomains
+        ;;
+    auto-assign)
+        auto_assign_all
+        ;;
+    configure)
+        configure
+        ;;
+    status)
+        show_status
+        ;;
+    enable)
+        save_setting "node_domain_enabled" "true"
+        echo "Auto-subdomain assignment enabled"
+        ;;
+    disable)
+        save_setting "node_domain_enabled" "false"
+        echo "Auto-subdomain assignment disabled"
+        ;;
+    *)
+        echo "Usage: $0 {assign|remove|list|auto-assign|configure|status|enable|disable}"
+        echo ""
+        echo "Commands:"
+        echo "  assign <peer> [sub]  Assign subdomain to peer"
+        echo "  remove <peer>        Remove subdomain from peer"
+        echo "  list                 List all peer subdomains"
+        echo "  auto-assign          Auto-assign subdomains to all peers"
+        echo "  configure            Interactive setup wizard"
+        echo "  status               Show current configuration"
+        echo "  enable               Enable auto-assignment for new peers"
+        echo "  disable              Disable auto-assignment for new peers"
+        ;;
+esac
+SUBDOMAINEOF
+    
+    chmod +x ${INSTALL_DIR}/subdomain.sh
     
     # Create backup script
     cat > ${INSTALL_DIR}/backup.sh <<'BACKUPEOF'
@@ -941,6 +1447,8 @@ create_cli_wrapper() {
     ln -sf ${INSTALL_DIR}/restore.sh /usr/local/bin/wg-restore
     ln -sf ${INSTALL_DIR}/sync.sh /usr/local/bin/wg-sync
     ln -sf ${INSTALL_DIR}/update.sh /usr/local/bin/wg-update
+    ln -sf ${INSTALL_DIR}/noip-update.sh /usr/local/bin/wg-noip
+    ln -sf ${INSTALL_DIR}/subdomain.sh /usr/local/bin/wg-subdomain
     
     # Create main management script
     cat > /usr/local/bin/wg-manager <<'CLIEOF'
