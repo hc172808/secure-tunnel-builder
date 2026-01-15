@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog } from "lucide-react";
+import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { PeerCard } from "@/components/PeerCard";
@@ -18,6 +18,8 @@ import { SyncStatusBadge } from "@/components/SyncStatusBadge";
 import { PeerGroupFilter } from "@/components/PeerGroupFilter";
 import { PeerSearchInput } from "@/components/PeerSearchInput";
 import { BulkPeerImportExport } from "@/components/BulkPeerImportExport";
+import { PeerConnectionNotifications } from "@/components/PeerConnectionNotifications";
+import { NetworkTopology } from "@/components/NetworkTopology";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -100,6 +102,7 @@ export default function Index() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showTopology, setShowTopology] = useState(false);
 
   // Fetch peers from database
   const fetchPeers = useCallback(async () => {
@@ -413,6 +416,8 @@ export default function Index() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Real-time connection notifications */}
+      <PeerConnectionNotifications />
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
@@ -439,6 +444,14 @@ export default function Index() {
               />
               <ApiTokenViewer />
               <ChangePassword />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowTopology(!showTopology)}
+                title="Toggle Network Topology"
+              >
+                <Globe className="h-4 w-4" />
+              </Button>
               <Button
                 variant="outline"
                 size="icon"
@@ -497,6 +510,13 @@ export default function Index() {
             icon={Shield}
           />
         </div>
+
+        {/* Network Topology */}
+        {showTopology && (
+          <div className="mb-8 animate-fade-in">
+            <NetworkTopology />
+          </div>
+        )}
 
         {/* Traffic Chart */}
         {showTrafficChart && (
