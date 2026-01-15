@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,6 +18,7 @@ import { PeerNotifications } from "@/components/admin/PeerNotifications";
 import { AdminNoIP } from "@/components/admin/AdminNoIP";
 import { AdminPeerGroups } from "@/components/admin/AdminPeerGroups";
 import { AdminNodeDomains } from "@/components/admin/AdminNodeDomains";
+import { DnsValidation } from "@/components/DnsValidation";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -114,6 +115,10 @@ export default function Admin() {
               <Network className="h-4 w-4" />
               <span className="hidden sm:inline">Domains</span>
             </TabsTrigger>
+            <TabsTrigger value="dns-validation" className="flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              <span className="hidden sm:inline">DNS Check</span>
+            </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               <span className="hidden sm:inline">Settings</span>
@@ -162,6 +167,10 @@ export default function Admin() {
 
           <TabsContent value="domains">
             <AdminNodeDomains />
+          </TabsContent>
+
+          <TabsContent value="dns-validation">
+            <DnsValidation />
           </TabsContent>
 
           <TabsContent value="settings">
