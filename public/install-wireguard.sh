@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS wireguard_peers (
     last_handshake TIMESTAMPTZ,
     transfer_rx BIGINT DEFAULT 0,
     transfer_tx BIGINT DEFAULT 0,
-    group_id UUID REFERENCES peer_groups(id) ON DELETE SET NULL,
+    group_id UUID,
     subdomain TEXT,
     hostname TEXT,
     created_by UUID,
@@ -192,10 +192,25 @@ CREATE TABLE IF NOT EXISTS peer_groups (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Peer notifications table for real-time connection events
+CREATE TABLE IF NOT EXISTS peer_notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    peer_id UUID,
+    peer_name TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Add foreign key after both tables exist
 ALTER TABLE wireguard_peers DROP CONSTRAINT IF EXISTS wireguard_peers_group_id_fkey;
 ALTER TABLE wireguard_peers ADD CONSTRAINT wireguard_peers_group_id_fkey 
     FOREIGN KEY (group_id) REFERENCES peer_groups(id) ON DELETE SET NULL;
+
+-- Add foreign key for peer_notifications
+ALTER TABLE peer_notifications DROP CONSTRAINT IF EXISTS peer_notifications_peer_id_fkey;
+ALTER TABLE peer_notifications ADD CONSTRAINT peer_notifications_peer_id_fkey
+    FOREIGN KEY (peer_id) REFERENCES wireguard_peers(id) ON DELETE SET NULL;
 
 -- Insert default peer groups
 INSERT INTO peer_groups (name, color, description) VALUES 
@@ -418,7 +433,7 @@ psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
         updated_at = NOW();
 "
 
-# Update peer statuses in local database
+# Update peer statuses in local database and track connection changes
 echo "$peers" | jq -c '.[]' | while read peer; do
     pk=$(echo "$peer" | jq -r '.public_key')
     ep=$(echo "$peer" | jq -r '.endpoint')
@@ -436,6 +451,28 @@ echo "$peers" | jq -c '.[]' | while read peer; do
         lh_ts=$(date -d "@$lh" '+%Y-%m-%d %H:%M:%S%z' 2>/dev/null || echo "")
     else
         lh_ts=""
+    fi
+    
+    # Get current status to detect changes
+    old_status=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT status FROM wireguard_peers WHERE public_key = '${pk}';
+    " 2>/dev/null | tr -d ' ')
+    
+    # Check if status changed and create notification
+    if [ -n "$old_status" ] && [ "$old_status" != "$status" ]; then
+        peer_info=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+            SELECT id, name FROM wireguard_peers WHERE public_key = '${pk}';
+        " 2>/dev/null)
+        peer_id=$(echo "$peer_info" | cut -d'|' -f1 | tr -d ' ')
+        peer_name=$(echo "$peer_info" | cut -d'|' -f2 | tr -d ' ')
+        
+        if [ -n "$peer_id" ] && [ -n "$peer_name" ]; then
+            psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+                INSERT INTO peer_notifications (peer_id, peer_name, event_type)
+                VALUES ('${peer_id}', '${peer_name}', '${status}');
+            " 2>/dev/null
+            echo "$(date): Status change for ${peer_name}: ${old_status} -> ${status}" >> /var/log/wg-sync.log
+        fi
     fi
     
     psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
@@ -1460,6 +1497,271 @@ create_cli_wrapper() {
     ln -sf ${INSTALL_DIR}/update.sh /usr/local/bin/wg-update
     ln -sf ${INSTALL_DIR}/noip-update.sh /usr/local/bin/wg-noip
     ln -sf ${INSTALL_DIR}/subdomain.sh /usr/local/bin/wg-subdomain
+    ln -sf ${INSTALL_DIR}/dns-validate.sh /usr/local/bin/wg-dns
+    
+    # Create DNS validation script
+    cat > ${INSTALL_DIR}/dns-validate.sh <<'DNSEOF'
+#!/bin/bash
+
+source /opt/wireguard-manager/config.env
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Get setting from database
+get_setting() {
+    local key=$1
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = '${key}';
+    " 2>/dev/null | tr -d ' '
+}
+
+# DNS validation using dig
+validate_dns() {
+    local hostname=$1
+    local expected_ip=${2:-$(curl -s https://api.ipify.org 2>/dev/null)}
+    
+    if [ -z "$hostname" ]; then
+        echo -e "${RED}Error: Hostname is required${NC}"
+        return 1
+    fi
+    
+    echo -e "${CYAN}Validating DNS for: ${hostname}${NC}"
+    echo ""
+    
+    # Get A record
+    local a_record=$(dig +short A ${hostname} 2>/dev/null | head -1)
+    
+    # Get AAAA record
+    local aaaa_record=$(dig +short AAAA ${hostname} 2>/dev/null | head -1)
+    
+    # Get CNAME record
+    local cname_record=$(dig +short CNAME ${hostname} 2>/dev/null | head -1)
+    
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                   DNS Validation Results                     ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Hostname:     ${hostname}"
+    echo "║  Expected IP:  ${expected_ip:-Not specified}"
+    echo "║"
+    echo "║  Records Found:"
+    
+    local status="valid"
+    
+    if [ -n "$a_record" ]; then
+        if [ "$a_record" = "$expected_ip" ]; then
+            echo -e "║    A Record:   ${GREEN}✓ ${a_record}${NC}"
+        else
+            echo -e "║    A Record:   ${YELLOW}⚠ ${a_record} (expected: ${expected_ip})${NC}"
+            status="mismatch"
+        fi
+    else
+        echo -e "║    A Record:   ${RED}✗ Not found${NC}"
+        status="missing"
+    fi
+    
+    if [ -n "$aaaa_record" ]; then
+        echo "║    AAAA:       ${aaaa_record}"
+    fi
+    
+    if [ -n "$cname_record" ]; then
+        echo "║    CNAME:      ${cname_record}"
+    fi
+    
+    echo "║"
+    
+    case $status in
+        valid)
+            echo -e "║  Status:       ${GREEN}✓ DNS is properly configured${NC}"
+            ;;
+        mismatch)
+            echo -e "║  Status:       ${YELLOW}⚠ IP mismatch - DNS may be outdated${NC}"
+            ;;
+        missing)
+            echo -e "║  Status:       ${RED}✗ DNS record not found${NC}"
+            ;;
+    esac
+    
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    [ "$status" = "valid" ] && return 0 || return 1
+}
+
+# Validate all peer hostnames
+validate_all() {
+    local base_domain=$(get_setting "node_base_domain")
+    local server_ip=$(curl -s https://api.ipify.org 2>/dev/null)
+    
+    export PGPASSWORD="${DB_PASSWORD}"
+    local peers=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT name, hostname, allowed_ips FROM wireguard_peers WHERE hostname IS NOT NULL;
+    ")
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Bulk DNS Validation Results                     ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Base Domain:  ${base_domain:-Not configured}"
+    echo "║  Server IP:    ${server_ip}"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    local total=0
+    local valid=0
+    local invalid=0
+    
+    while IFS='|' read -r name hostname allowed_ips; do
+        name=$(echo "$name" | tr -d ' ')
+        hostname=$(echo "$hostname" | tr -d ' ')
+        allowed_ips=$(echo "$allowed_ips" | tr -d ' ')
+        
+        if [ -n "$hostname" ]; then
+            ((total++))
+            local a_record=$(dig +short A ${hostname} 2>/dev/null | head -1)
+            
+            if [ "$a_record" = "$server_ip" ]; then
+                echo -e "${GREEN}✓${NC} ${name}: ${hostname} -> ${a_record}"
+                ((valid++))
+            elif [ -n "$a_record" ]; then
+                echo -e "${YELLOW}⚠${NC} ${name}: ${hostname} -> ${a_record} (expected: ${server_ip})"
+                ((invalid++))
+            else
+                echo -e "${RED}✗${NC} ${name}: ${hostname} -> No DNS record"
+                ((invalid++))
+            fi
+        fi
+    done <<< "$peers"
+    
+    echo ""
+    echo "Summary: ${valid}/${total} valid, ${invalid} issues"
+    echo ""
+}
+
+# Check wildcard DNS
+check_wildcard() {
+    local base_domain=$(get_setting "node_base_domain")
+    
+    if [ -z "$base_domain" ]; then
+        echo -e "${RED}Base domain not configured${NC}"
+        return 1
+    fi
+    
+    local server_ip=$(curl -s https://api.ipify.org 2>/dev/null)
+    local test_subdomain="test-$(date +%s)"
+    local test_hostname="${test_subdomain}.${base_domain}"
+    
+    echo "Testing wildcard DNS for *.${base_domain}..."
+    echo "Test hostname: ${test_hostname}"
+    echo ""
+    
+    local resolved_ip=$(dig +short A ${test_hostname} 2>/dev/null | head -1)
+    
+    if [ "$resolved_ip" = "$server_ip" ]; then
+        echo -e "${GREEN}✓ Wildcard DNS is properly configured!${NC}"
+        echo "  *.${base_domain} -> ${server_ip}"
+        return 0
+    elif [ -n "$resolved_ip" ]; then
+        echo -e "${YELLOW}⚠ Wildcard DNS resolves to unexpected IP${NC}"
+        echo "  Expected: ${server_ip}"
+        echo "  Got: ${resolved_ip}"
+        return 1
+    else
+        echo -e "${RED}✗ Wildcard DNS is not configured${NC}"
+        echo ""
+        echo "To fix, add this DNS record to your domain:"
+        echo "  Type: A"
+        echo "  Name: *.${base_domain}"
+        echo "  Value: ${server_ip}"
+        return 1
+    fi
+}
+
+# Get propagation status
+check_propagation() {
+    local hostname=$1
+    
+    if [ -z "$hostname" ]; then
+        echo "Usage: $0 propagation <hostname>"
+        return 1
+    fi
+    
+    local dns_servers=("8.8.8.8" "1.1.1.1" "208.67.222.222" "9.9.9.9")
+    local dns_names=("Google" "Cloudflare" "OpenDNS" "Quad9")
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              DNS Propagation Check: ${hostname}"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    
+    for i in "${!dns_servers[@]}"; do
+        local server=${dns_servers[$i]}
+        local name=${dns_names[$i]}
+        local result=$(dig @${server} +short A ${hostname} 2>/dev/null | head -1)
+        
+        if [ -n "$result" ]; then
+            echo -e "║  ${name} (${server}): ${GREEN}${result}${NC}"
+        else
+            echo -e "║  ${name} (${server}): ${RED}Not resolved${NC}"
+        fi
+    done
+    
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+# Help
+show_help() {
+    echo ""
+    echo "WireGuard DNS Validation Tool"
+    echo "=============================="
+    echo ""
+    echo "Usage: wg-dns <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  validate <hostname>     Validate DNS for a specific hostname"
+    echo "  validate-all            Validate DNS for all peer hostnames"
+    echo "  wildcard                Check if wildcard DNS is configured"
+    echo "  propagation <hostname>  Check DNS propagation across providers"
+    echo "  help                    Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  wg-dns validate laptop.vpn.example.com"
+    echo "  wg-dns validate-all"
+    echo "  wg-dns wildcard"
+    echo "  wg-dns propagation server.vpn.example.com"
+    echo ""
+}
+
+case "$1" in
+    validate)
+        validate_dns "$2" "$3"
+        ;;
+    validate-all)
+        validate_all
+        ;;
+    wildcard)
+        check_wildcard
+        ;;
+    propagation)
+        check_propagation "$2"
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        echo "Usage: $0 {validate|validate-all|wildcard|propagation|help}"
+        echo "Run '$0 help' for more information"
+        ;;
+esac
+DNSEOF
+
+    chmod +x ${INSTALL_DIR}/dns-validate.sh
     
     # Create main management script
     cat > /usr/local/bin/wg-manager <<'CLIEOF'
@@ -1614,6 +1916,12 @@ case $1 in
         echo "  enable-cloud      Enable cloud synchronization"
         echo "  disable-cloud     Disable cloud synchronization"
         echo "  set-github        Set GitHub repo for updates"
+        echo ""
+        echo "DNS Commands:"
+        echo "  wg-dns validate <host>   Validate DNS for hostname"
+        echo "  wg-dns validate-all      Validate DNS for all peers"
+        echo "  wg-dns wildcard          Check wildcard DNS setup"
+        echo "  wg-dns propagation <h>   Check DNS propagation"
         echo ""
         echo "Configuration Commands:"
         echo "  ssl               Setup SSL/HTTPS with Let's Encrypt"
@@ -2026,6 +2334,8 @@ print_summary() {
     echo "  ├─ wg-manager peer list       - List all peers"
     echo "  ├─ wg-noip configure          - Setup No-IP DNS updates"
     echo "  ├─ wg-subdomain configure     - Setup node subdomains"
+    echo "  ├─ wg-dns validate-all        - Validate all DNS records"
+    echo "  ├─ wg-dns wildcard            - Check wildcard DNS"
     echo "  ├─ wg-backup                  - Create backup"
     echo "  ├─ wg-restore FILE            - Restore from backup"
     echo "  ├─ wg-manager update          - Pull updates from GitHub"
@@ -2257,6 +2567,12 @@ app.post('/peers', authMiddleware, adminMiddleware, async (req, res) => {
     // Add to WireGuard
     exec(`wg set wg0 peer ${publicKey} allowed-ips ${nextIP}/32 && wg-quick save wg0`);
     
+    // Create notification for new peer
+    await pool.query(`
+      INSERT INTO peer_notifications (peer_id, peer_name, event_type)
+      VALUES ($1, $2, 'added')
+    `, [rows[0].id, name]);
+    
     // Broadcast to WebSocket clients
     broadcastUpdate('peer_created', rows[0]);
     
@@ -2281,10 +2597,16 @@ app.delete('/peers/:id', authMiddleware, adminMiddleware, async (req, res) => {
     // Remove from WireGuard
     exec(`wg set wg0 peer ${peer.public_key} remove && wg-quick save wg0`);
     
+    // Create notification for removed peer
+    await pool.query(`
+      INSERT INTO peer_notifications (peer_id, peer_name, event_type)
+      VALUES ($1, $2, 'removed')
+    `, [req.params.id, peer.name]);
+    
     // Delete from database
     await pool.query('DELETE FROM wireguard_peers WHERE id = $1', [req.params.id]);
     
-    broadcastUpdate('peer_deleted', { id: req.params.id });
+    broadcastUpdate('peer_deleted', { id: req.params.id, name: peer.name });
     
     res.json({ success: true });
   } catch (err) {
@@ -2473,6 +2795,137 @@ app.get('/audit-logs', authMiddleware, adminMiddleware, async (req, res) => {
       SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100
     `);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get notifications
+app.get('/notifications', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT * FROM peer_notifications ORDER BY created_at DESC LIMIT 50
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark notification as read
+app.put('/notifications/:id/read', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('UPDATE peer_notifications SET read = true WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark all notifications as read
+app.put('/notifications/read-all', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('UPDATE peer_notifications SET read = true');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clear all notifications
+app.delete('/notifications', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM peer_notifications');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DNS validation endpoint
+app.post('/dns/validate', authMiddleware, async (req, res) => {
+  const { hostname } = req.body;
+  
+  try {
+    const { stdout: result } = await new Promise((resolve, reject) => {
+      exec(`dig +short A ${hostname}`, (err, stdout) => {
+        if (err) reject(err);
+        else resolve({ stdout: stdout.trim() });
+      });
+    });
+    
+    // Get server IP
+    const { stdout: serverIP } = await new Promise((resolve, reject) => {
+      exec('curl -s https://api.ipify.org', (err, stdout) => {
+        if (err) reject(err);
+        else resolve({ stdout: stdout.trim() });
+      });
+    });
+    
+    const resolved_ip = result.split('\\n')[0];
+    const valid = resolved_ip === serverIP;
+    
+    res.json({
+      hostname,
+      resolved_ip: resolved_ip || null,
+      expected_ip: serverIP,
+      valid,
+      status: resolved_ip ? (valid ? 'valid' : 'mismatch') : 'not_found'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk DNS validation
+app.get('/dns/validate-all', authMiddleware, async (req, res) => {
+  try {
+    const { rows: peers } = await pool.query(`
+      SELECT id, name, hostname FROM wireguard_peers WHERE hostname IS NOT NULL
+    `);
+    
+    const { stdout: serverIP } = await new Promise((resolve, reject) => {
+      exec('curl -s https://api.ipify.org', (err, stdout) => {
+        if (err) reject(err);
+        else resolve({ stdout: stdout.trim() });
+      });
+    });
+    
+    const results = await Promise.all(peers.map(async (peer) => {
+      try {
+        const { stdout: result } = await new Promise((resolve, reject) => {
+          exec(`dig +short A ${peer.hostname}`, (err, stdout) => {
+            if (err) reject(err);
+            else resolve({ stdout: stdout.trim() });
+          });
+        });
+        
+        const resolved_ip = result.split('\\n')[0];
+        const valid = resolved_ip === serverIP;
+        
+        return {
+          peer_id: peer.id,
+          peer_name: peer.name,
+          hostname: peer.hostname,
+          resolved_ip: resolved_ip || null,
+          expected_ip: serverIP,
+          valid,
+          status: resolved_ip ? (valid ? 'valid' : 'mismatch') : 'not_found'
+        };
+      } catch {
+        return {
+          peer_id: peer.id,
+          peer_name: peer.name,
+          hostname: peer.hostname,
+          resolved_ip: null,
+          expected_ip: serverIP,
+          valid: false,
+          status: 'error'
+        };
+      }
+    }));
+    
+    res.json(results);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
