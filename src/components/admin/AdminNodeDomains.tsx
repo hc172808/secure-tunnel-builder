@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Globe, RefreshCw, Save, Server, Network, Plus, Trash2 } from "lucide-react";
+import { Globe, RefreshCw, Save, Server, Network, Plus, Trash2, CheckCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -27,6 +29,16 @@ interface PeerWithDomain {
   status: string;
 }
 
+interface DnsPropagationState {
+  hostname: string;
+  checking: boolean;
+  attempts: number;
+  maxAttempts: number;
+  progress: number;
+  status: "idle" | "checking" | "success" | "failed";
+  results: { timestamp: Date; success: boolean; resolvedIp?: string; error?: string }[];
+}
+
 export function AdminNodeDomains() {
   const { user } = useAuth();
   const [settings, setSettings] = useState<NodeDomainSettings>({
@@ -39,6 +51,8 @@ export function AdminNodeDomains() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [newSubdomain, setNewSubdomain] = useState<Record<string, string>>({});
+  const [propagationDialog, setPropagationDialog] = useState(false);
+  const [propagationState, setPropagationState] = useState<DnsPropagationState | null>(null);
 
   useEffect(() => {
     fetchSettings();
@@ -148,6 +162,85 @@ export function AdminNodeDomains() {
     }
   };
 
+  const checkDnsPropagation = async (hostname: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.functions.invoke("dns-validate", {
+        body: { hostname },
+      });
+      return !error && data?.valid === true;
+    } catch {
+      return false;
+    }
+  };
+
+  const startPropagationCheck = async (hostname: string) => {
+    setPropagationDialog(true);
+    setPropagationState({
+      hostname,
+      checking: true,
+      attempts: 0,
+      maxAttempts: 12,
+      progress: 0,
+      status: "checking",
+      results: [],
+    });
+
+    let attemptCount = 0;
+    let successCount = 0;
+    const maxAttempts = 12;
+    const requiredSuccesses = 3;
+
+    const runCheck = async () => {
+      attemptCount++;
+      const result = await checkDnsPropagation(hostname);
+      
+      setPropagationState((prev) => {
+        if (!prev) return prev;
+        const newResults = [
+          ...prev.results,
+          { timestamp: new Date(), success: result, resolvedIp: result ? "Resolved" : undefined, error: result ? undefined : "Not resolved" },
+        ];
+        return {
+          ...prev,
+          attempts: attemptCount,
+          progress: (attemptCount / maxAttempts) * 100,
+          results: newResults,
+        };
+      });
+
+      if (result) {
+        successCount++;
+        if (successCount >= requiredSuccesses) {
+          setPropagationState((prev) => prev ? { ...prev, checking: false, status: "success" } : prev);
+          toast.success(`DNS propagation confirmed for ${hostname}`);
+          return true;
+        }
+      } else {
+        successCount = 0;
+      }
+
+      if (attemptCount >= maxAttempts) {
+        setPropagationState((prev) => prev ? { ...prev, checking: false, status: "failed" } : prev);
+        toast.warning(`DNS not fully propagated for ${hostname}. It may take longer.`);
+        return false;
+      }
+
+      return null;
+    };
+
+    // Initial check
+    const initialResult = await runCheck();
+    if (initialResult !== null) return;
+
+    // Continue checking every 5 seconds
+    const interval = setInterval(async () => {
+      const result = await runCheck();
+      if (result !== null) {
+        clearInterval(interval);
+      }
+    }, 5000);
+  };
+
   const assignSubdomain = async (peerId: string) => {
     const subdomain = newSubdomain[peerId];
     if (!subdomain) {
@@ -181,6 +274,9 @@ export function AdminNodeDomains() {
       toast.success(`Subdomain ${hostname} assigned`);
       fetchPeers();
       setNewSubdomain((prev) => ({ ...prev, [peerId]: "" }));
+
+      // Start DNS propagation check
+      startPropagationCheck(hostname);
     } catch (error) {
       console.error("Error assigning subdomain:", error);
       toast.error("Failed to assign subdomain");
@@ -246,6 +342,9 @@ export function AdminNodeDomains() {
 
       toast.success(`Auto-assigned ${hostname}`);
       fetchPeers();
+
+      // Start DNS propagation check
+      startPropagationCheck(hostname);
     } catch (error) {
       console.error("Error auto-assigning subdomain:", error);
       toast.error("Failed to auto-assign subdomain");
@@ -468,6 +567,82 @@ export function AdminNodeDomains() {
           </p>
         </CardContent>
       </Card>
+
+      {/* DNS Propagation Dialog */}
+      <Dialog open={propagationDialog} onOpenChange={setPropagationDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {propagationState?.status === "checking" && (
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              )}
+              {propagationState?.status === "success" && (
+                <CheckCircle className="h-5 w-5 text-success" />
+              )}
+              {propagationState?.status === "failed" && (
+                <Globe className="h-5 w-5 text-warning" />
+              )}
+              DNS Propagation Check
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Checking DNS propagation for: <span className="font-mono">{propagationState?.hostname}</span>
+            </p>
+            
+            {propagationState?.checking && (
+              <div className="space-y-2">
+                <Progress value={propagationState.progress} className="h-2" />
+                <p className="text-xs text-muted-foreground text-center">
+                  Attempt {propagationState.attempts}/{propagationState.maxAttempts} • Checking every 5 seconds
+                </p>
+              </div>
+            )}
+
+            {propagationState?.status === "success" && (
+              <div className="p-3 bg-success/10 rounded-lg border border-success/30">
+                <p className="text-sm text-success">
+                  ✓ DNS has propagated successfully! The hostname is now resolvable.
+                </p>
+              </div>
+            )}
+
+            {propagationState?.status === "failed" && (
+              <div className="p-3 bg-warning/10 rounded-lg border border-warning/30">
+                <p className="text-sm text-warning">
+                  DNS propagation is not yet complete. This can take up to 48 hours depending on your DNS provider.
+                </p>
+              </div>
+            )}
+
+            {propagationState?.results && propagationState.results.length > 0 && (
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {propagationState.results.slice(-5).map((result, index) => (
+                  <div
+                    key={index}
+                    className={`flex items-center justify-between text-xs p-1.5 rounded ${
+                      result.success ? "bg-success/10" : "bg-destructive/10"
+                    }`}
+                  >
+                    <span className="text-muted-foreground">
+                      {result.timestamp.toLocaleTimeString()}
+                    </span>
+                    <span className={result.success ? "text-success" : "text-destructive"}>
+                      {result.success ? "✓ Resolved" : "✗ Not resolved"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => setPropagationDialog(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
