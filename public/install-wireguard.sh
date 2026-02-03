@@ -5,6 +5,23 @@
 # For Ubuntu 22.04 LTS
 # Includes: WireGuard, PostgreSQL, Node.js API, React Frontend
 # Full Front-end and Back-end Setup with GitHub Integration
+#
+# USAGE:
+#   Direct install on Ubuntu 22.04:
+#     curl -fsSL https://raw.githubusercontent.com/your-repo/wireguard-manager/main/public/install-wireguard.sh | bash
+#
+#   Proxmox LXC Container:
+#     Use setup-proxmox.sh for automated container creation
+#     Or manually create Ubuntu 22.04 container and run this script
+#
+# PROXMOX LXC REQUIREMENTS:
+#   - Unprivileged container: NO (use privileged for WireGuard)
+#   - Features: nesting=1, keyctl=1
+#   - Add to container config (/etc/pve/lxc/<ID>.conf):
+#       lxc.cgroup2.devices.allow: c 10:200 rwm
+#       lxc.mount.entry: /dev/net dev/net none bind,create=dir
+#       lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+#
 #######################################
 
 set -e
