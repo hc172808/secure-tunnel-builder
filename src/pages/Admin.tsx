@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network, Search, Activity } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network, Search, Activity, BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
@@ -20,6 +20,7 @@ import { AdminPeerGroups } from "@/components/admin/AdminPeerGroups";
 import { AdminNodeDomains } from "@/components/admin/AdminNodeDomains";
 import { DnsValidation } from "@/components/DnsValidation";
 import { SystemHealthDashboard } from "@/components/SystemHealthDashboard";
+import { AdminEmailNotifications } from "@/components/admin/AdminEmailNotifications";
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -124,6 +125,10 @@ export default function Admin() {
               <Search className="h-4 w-4" />
               <span className="hidden sm:inline">DNS Check</span>
             </TabsTrigger>
+            <TabsTrigger value="email-notifications" className="flex items-center gap-2">
+              <BellRing className="h-4 w-4" />
+              <span className="hidden sm:inline">Email Alerts</span>
+            </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               <span className="hidden sm:inline">Settings</span>
@@ -180,6 +185,10 @@ export default function Admin() {
 
           <TabsContent value="dns-validation">
             <DnsValidation />
+          </TabsContent>
+
+          <TabsContent value="email-notifications">
+            <AdminEmailNotifications />
           </TabsContent>
 
           <TabsContent value="settings">

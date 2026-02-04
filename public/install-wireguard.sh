@@ -478,10 +478,11 @@ echo "$peers" | jq -c '.[]' | while read peer; do
     # Check if status changed and create notification
     if [ -n "$old_status" ] && [ "$old_status" != "$status" ]; then
         peer_info=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
-            SELECT id, name FROM wireguard_peers WHERE public_key = '${pk}';
+            SELECT id, name, allowed_ips FROM wireguard_peers WHERE public_key = '${pk}';
         " 2>/dev/null)
         peer_id=$(echo "$peer_info" | cut -d'|' -f1 | tr -d ' ')
         peer_name=$(echo "$peer_info" | cut -d'|' -f2 | tr -d ' ')
+        peer_ip=$(echo "$peer_info" | cut -d'|' -f3 | tr -d ' ')
         
         if [ -n "$peer_id" ] && [ -n "$peer_name" ]; then
             psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
@@ -489,6 +490,12 @@ echo "$peers" | jq -c '.[]' | while read peer; do
                 VALUES ('${peer_id}', '${peer_name}', '${status}');
             " 2>/dev/null
             echo "$(date): Status change for ${peer_name}: ${old_status} -> ${status}" >> /var/log/wg-sync.log
+            
+            # Trigger email notification via API
+            curl -s -X POST "http://localhost:3001/internal/email-notify" \
+                -H "Content-Type: application/json" \
+                -d "{\"peer_name\": \"${peer_name}\", \"event_type\": \"${status}\", \"peer_ip\": \"${peer_ip}\"}" \
+                2>/dev/null || true
         fi
     fi
     
@@ -1515,6 +1522,188 @@ create_cli_wrapper() {
     ln -sf ${INSTALL_DIR}/noip-update.sh /usr/local/bin/wg-noip
     ln -sf ${INSTALL_DIR}/subdomain.sh /usr/local/bin/wg-subdomain
     ln -sf ${INSTALL_DIR}/dns-validate.sh /usr/local/bin/wg-dns
+    ln -sf ${INSTALL_DIR}/email-notify.sh /usr/local/bin/wg-email
+    
+    # Create email notification management script
+    cat > ${INSTALL_DIR}/email-notify.sh <<'EMAILEOF'
+#!/bin/bash
+
+source /opt/wireguard-manager/config.env
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Get setting from database
+get_setting() {
+    local key=$1
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings WHERE setting_key = '${key}';
+    " 2>/dev/null | tr -d ' '
+}
+
+# Save setting to database
+save_setting() {
+    local key=$1
+    local value=$2
+    export PGPASSWORD="${DB_PASSWORD}"
+    psql -h localhost -U ${DB_USER} -d ${DB_NAME} -c "
+        INSERT INTO server_settings (setting_key, setting_value, updated_at)
+        VALUES ('${key}', '${value}', NOW())
+        ON CONFLICT (setting_key) DO UPDATE SET 
+            setting_value = EXCLUDED.setting_value,
+            updated_at = NOW();
+    " 2>/dev/null
+}
+
+# Configure email settings
+configure() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Email Notification Configuration                 ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    read -p "Notification email address: " email
+    read -p "SMTP Host (e.g., smtp.gmail.com): " smtp_host
+    read -p "SMTP Port [587]: " smtp_port
+    smtp_port=${smtp_port:-587}
+    read -p "SMTP Username (optional): " smtp_user
+    if [ -n "$smtp_user" ]; then
+        read -s -p "SMTP Password: " smtp_password
+        echo ""
+    fi
+    read -p "From address [noreply@wireguard-manager.local]: " smtp_from
+    smtp_from=${smtp_from:-noreply@wireguard-manager.local}
+    
+    echo ""
+    echo "Notification Events:"
+    read -p "Notify on peer connect? (yes/no) [yes]: " notify_connect
+    read -p "Notify on peer disconnect? (yes/no) [yes]: " notify_disconnect
+    read -p "Notify on peer added? (yes/no) [yes]: " notify_added
+    read -p "Notify on peer removed? (yes/no) [yes]: " notify_removed
+    
+    save_setting "email_notifications_enabled" "true"
+    save_setting "notification_email" "${email}"
+    save_setting "smtp_host" "${smtp_host}"
+    save_setting "smtp_port" "${smtp_port}"
+    save_setting "smtp_user" "${smtp_user:-}"
+    save_setting "smtp_password" "${smtp_password:-}"
+    save_setting "smtp_from" "${smtp_from}"
+    save_setting "notify_on_connect" "$([ "${notify_connect:-yes}" = "yes" ] && echo "true" || echo "false")"
+    save_setting "notify_on_disconnect" "$([ "${notify_disconnect:-yes}" = "yes" ] && echo "true" || echo "false")"
+    save_setting "notify_on_peer_added" "$([ "${notify_added:-yes}" = "yes" ] && echo "true" || echo "false")"
+    save_setting "notify_on_peer_removed" "$([ "${notify_removed:-yes}" = "yes" ] && echo "true" || echo "false")"
+    
+    echo ""
+    echo -e "${GREEN}✓ Email notifications configured!${NC}"
+    echo ""
+    echo "Run 'wg-email test' to send a test email."
+}
+
+# Show status
+show_status() {
+    local enabled=$(get_setting "email_notifications_enabled")
+    local email=$(get_setting "notification_email")
+    local smtp_host=$(get_setting "smtp_host")
+    local smtp_port=$(get_setting "smtp_port")
+    local notify_connect=$(get_setting "notify_on_connect")
+    local notify_disconnect=$(get_setting "notify_on_disconnect")
+    local notify_added=$(get_setting "notify_on_peer_added")
+    local notify_removed=$(get_setting "notify_on_peer_removed")
+    
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Email Notification Status                        ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Enabled:           ${enabled:-false}"
+    echo "║  Email:             ${email:-Not configured}"
+    echo "║  SMTP Host:         ${smtp_host:-Not configured}"
+    echo "║  SMTP Port:         ${smtp_port:-587}"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Notification Events:"
+    echo "║    Connect:         ${notify_connect:-true}"
+    echo "║    Disconnect:      ${notify_disconnect:-true}"
+    echo "║    Peer Added:      ${notify_added:-true}"
+    echo "║    Peer Removed:    ${notify_removed:-true}"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+# Send test email
+send_test() {
+    echo "Sending test email..."
+    
+    local response=$(curl -s -X POST "http://localhost:3001/internal/email-notify" \
+        -H "Content-Type: application/json" \
+        -d '{"peer_name": "Test Peer", "event_type": "connected", "peer_ip": "10.0.0.100"}')
+    
+    if echo "$response" | grep -q '"success":true'; then
+        echo -e "${GREEN}✓ Test email sent successfully!${NC}"
+    else
+        echo -e "${RED}✗ Failed to send test email${NC}"
+        echo "Response: ${response}"
+    fi
+}
+
+# Enable/disable notifications
+toggle() {
+    local current=$(get_setting "email_notifications_enabled")
+    
+    if [ "${current}" = "true" ]; then
+        save_setting "email_notifications_enabled" "false"
+        echo -e "${YELLOW}Email notifications disabled${NC}"
+    else
+        save_setting "email_notifications_enabled" "true"
+        echo -e "${GREEN}Email notifications enabled${NC}"
+    fi
+}
+
+case "$1" in
+    configure)
+        configure
+        ;;
+    status)
+        show_status
+        ;;
+    test)
+        send_test
+        ;;
+    enable)
+        save_setting "email_notifications_enabled" "true"
+        echo -e "${GREEN}Email notifications enabled${NC}"
+        ;;
+    disable)
+        save_setting "email_notifications_enabled" "false"
+        echo -e "${YELLOW}Email notifications disabled${NC}"
+        ;;
+    toggle)
+        toggle
+        ;;
+    *)
+        echo ""
+        echo "WireGuard Email Notification Tool"
+        echo "=================================="
+        echo ""
+        echo "Usage: wg-email <command>"
+        echo ""
+        echo "Commands:"
+        echo "  configure   Interactive setup wizard"
+        echo "  status      Show current email configuration"
+        echo "  test        Send a test email"
+        echo "  enable      Enable email notifications"
+        echo "  disable     Disable email notifications"
+        echo "  toggle      Toggle email notifications on/off"
+        echo ""
+        ;;
+esac
+EMAILEOF
+
+    chmod +x ${INSTALL_DIR}/email-notify.sh
     
     # Create DNS validation script
     cat > ${INSTALL_DIR}/dns-validate.sh <<'DNSEOF'
@@ -2353,6 +2542,8 @@ print_summary() {
     echo "  ├─ wg-subdomain configure     - Setup node subdomains"
     echo "  ├─ wg-dns validate-all        - Validate all DNS records"
     echo "  ├─ wg-dns wildcard            - Check wildcard DNS"
+    echo "  ├─ wg-email configure         - Setup email notifications"
+    echo "  ├─ wg-email test              - Send test notification email"
     echo "  ├─ wg-backup                  - Create backup"
     echo "  ├─ wg-restore FILE            - Restore from backup"
     echo "  ├─ wg-manager update          - Pull updates from GitHub"
@@ -2392,7 +2583,8 @@ setup_backend_api() {
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "dotenv": "^16.3.1",
-    "ws": "^8.14.2"
+    "ws": "^8.14.2",
+    "nodemailer": "^6.9.7"
   }
 }
 PKGEOF
@@ -2948,6 +3140,184 @@ app.get('/dns/validate-all', authMiddleware, async (req, res) => {
   }
 });
 
+// Email notification helper
+const nodemailer = require('nodemailer');
+
+async function sendEmailNotification(eventType, peerName, peerIP) {
+  try {
+    const { rows: settings } = await pool.query(\`
+      SELECT setting_key, setting_value FROM server_settings 
+      WHERE setting_key IN (
+        'email_notifications_enabled', 'notification_email', 'smtp_host', 
+        'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from',
+        'notify_on_connect', 'notify_on_disconnect', 'notify_on_peer_added', 'notify_on_peer_removed'
+      )
+    \`);
+    
+    const config = settings.reduce((acc, s) => ({ ...acc, [s.setting_key]: s.setting_value }), {});
+    
+    if (config.email_notifications_enabled !== 'true') {
+      console.log('Email notifications disabled');
+      return;
+    }
+    
+    // Check if this event type should trigger notification
+    const eventConfig = {
+      'connected': config.notify_on_connect,
+      'disconnected': config.notify_on_disconnect,
+      'added': config.notify_on_peer_added,
+      'removed': config.notify_on_peer_removed,
+    };
+    
+    if (eventConfig[eventType] !== 'true') {
+      console.log(\`Notifications for \${eventType} disabled\`);
+      return;
+    }
+    
+    if (!config.notification_email || !config.smtp_host) {
+      console.log('Email configuration incomplete');
+      return;
+    }
+    
+    const transporter = nodemailer.createTransport({
+      host: config.smtp_host,
+      port: parseInt(config.smtp_port || '587'),
+      secure: config.smtp_port === '465',
+      auth: config.smtp_user ? {
+        user: config.smtp_user,
+        pass: config.smtp_password,
+      } : undefined,
+    });
+    
+    const eventLabels = {
+      connected: '🟢 Connected',
+      disconnected: '🔴 Disconnected',
+      added: '➕ Added',
+      removed: '🗑️ Removed',
+    };
+    
+    const eventColors = {
+      connected: '#22c55e',
+      disconnected: '#ef4444',
+      added: '#3b82f6',
+      removed: '#f59e0b',
+    };
+    
+    const subject = \`WireGuard: \${peerName} \${eventType}\`;
+    const html = \`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #fff; padding: 20px; }
+          .container { max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 12px; padding: 30px; }
+          .header { text-align: center; margin-bottom: 20px; font-size: 24px; font-weight: bold; color: #3b82f6; }
+          .badge { display: inline-block; padding: 8px 16px; border-radius: 8px; font-weight: 600; background: \${eventColors[eventType]}20; color: \${eventColors[eventType]}; border: 1px solid \${eventColors[eventType]}40; margin: 20px 0; }
+          .details { background: #0f172a; border-radius: 8px; padding: 20px; }
+          .row { padding: 10px 0; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; }
+          .row:last-child { border-bottom: none; }
+          .label { color: #94a3b8; }
+          .value { color: #fff; font-weight: 500; }
+          .footer { text-align: center; margin-top: 20px; color: #64748b; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">🔐 WireGuard Manager</div>
+          <div style="text-align: center;">
+            <span class="badge">\${eventLabels[eventType] || eventType}</span>
+          </div>
+          <div class="details">
+            <div class="row"><span class="label">Peer Name</span><span class="value">\${peerName}</span></div>
+            \${peerIP ? '<div class="row"><span class="label">IP Address</span><span class="value">' + peerIP + '</span></div>' : ''}
+            <div class="row"><span class="label">Event</span><span class="value">\${eventType}</span></div>
+            <div class="row"><span class="label">Time</span><span class="value">\${new Date().toLocaleString()}</span></div>
+          </div>
+          <div class="footer">Automated notification from your WireGuard VPN server</div>
+        </div>
+      </body>
+      </html>
+    \`;
+    
+    await transporter.sendMail({
+      from: config.smtp_from || 'noreply@wireguard-manager.local',
+      to: config.notification_email,
+      subject,
+      html,
+    });
+    
+    console.log(\`Email notification sent to \${config.notification_email} for \${eventType}: \${peerName}\`);
+  } catch (err) {
+    console.error('Failed to send email notification:', err.message);
+  }
+}
+
+// Send test email endpoint
+app.post('/email/test', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await sendEmailNotification('connected', 'Test Peer', '10.0.0.100');
+    res.json({ success: true, message: 'Test email sent' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get email settings
+app.get('/email/settings', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT setting_key, setting_value FROM server_settings 
+      WHERE setting_key LIKE 'email%' OR setting_key LIKE 'smtp%' OR setting_key LIKE 'notify%' OR setting_key = 'notification_email'
+    \`);
+    res.json(rows.reduce((acc, s) => ({ ...acc, [s.setting_key]: s.setting_value }), {}));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update email settings
+app.put('/email/settings', authMiddleware, adminMiddleware, async (req, res) => {
+  const settings = req.body;
+  
+  try {
+    for (const [key, value] of Object.entries(settings)) {
+      await pool.query(\`
+        INSERT INTO server_settings (setting_key, setting_value, updated_at, updated_by)
+        VALUES (\$1, \$2, NOW(), \$3)
+        ON CONFLICT (setting_key) DO UPDATE SET
+          setting_value = EXCLUDED.setting_value,
+          updated_at = NOW(),
+          updated_by = EXCLUDED.updated_by
+      \`, [key, value, req.user.id]);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Internal endpoint for sync script to trigger email notifications (no auth required, localhost only)
+app.post('/internal/email-notify', async (req, res) => {
+  // Only allow from localhost
+  const ip = req.ip || req.connection.remoteAddress;
+  if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  
+  const { peer_name, event_type, peer_ip } = req.body;
+  
+  if (!peer_name || !event_type) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  try {
+    await sendEmailNotification(event_type, peer_name, peer_ip);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // WebSocket broadcast function
 function broadcastUpdate(type, data) {
   const message = JSON.stringify({ type, data, timestamp: new Date().toISOString() });
@@ -2956,6 +3326,13 @@ function broadcastUpdate(type, data) {
       client.send(message);
     }
   });
+  
+  // Trigger email notification for peer events
+  if (type === 'peer_created') {
+    sendEmailNotification('added', data.name, data.allowed_ips);
+  } else if (type === 'peer_deleted') {
+    sendEmailNotification('removed', data.name, null);
+  }
 }
 
 // WebSocket connection handler
@@ -2966,7 +3343,7 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.API_PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`API server running on port ${PORT}`);
+  console.log(\`API server running on port \${PORT}\`);
 });
 APIEOF
     
