@@ -5,8 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+ import { EmailNotificationLogs } from "./EmailNotificationLogs";
 
 interface EmailSettings {
   email_notifications_enabled: string;
@@ -143,7 +145,13 @@ export function AdminEmailNotifications() {
   }
 
   return (
-    <div className="space-y-6">
+     <Tabs defaultValue="settings" className="space-y-6">
+       <TabsList>
+         <TabsTrigger value="settings">Settings</TabsTrigger>
+         <TabsTrigger value="history">Notification History</TabsTrigger>
+       </TabsList>
+ 
+       <TabsContent value="settings" className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Email Notifications</h2>
@@ -320,6 +328,11 @@ export function AdminEmailNotifications() {
           </div>
         </CardContent>
       </Card>
-    </div>
+       </TabsContent>
+ 
+       <TabsContent value="history">
+         <EmailNotificationLogs />
+       </TabsContent>
+     </Tabs>
   );
 }

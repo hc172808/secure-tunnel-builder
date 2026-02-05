@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+ import { useRef, useCallback } from "react";
 import { Wifi, WifiOff, Loader2, Cloud, Database, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -31,13 +32,14 @@ export function ConnectionStatusIndicator() {
     realtime: "checking",
   });
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+   const isCheckingRealtimeRef = useRef(false);
 
-  const checkConnections = async () => {
+   const checkConnections = useCallback(async () => {
     setConnections(prev => ({
       ...prev,
       cloud: "checking",
       database: "checking",
-      realtime: "checking",
     }));
 
     // Check Cloud/Supabase connection
@@ -56,15 +58,48 @@ export function ConnectionStatusIndicator() {
       }));
     }
 
-    // Check realtime
-    const channel = supabase.channel("connection-test");
-    channel.subscribe((status) => {
-      setConnections(prev => ({
-        ...prev,
-        realtime: status === "SUBSCRIBED" ? "connected" : "disconnected",
-      }));
-      supabase.removeChannel(channel);
-    });
+     // Check realtime only if not already checking
+     if (!isCheckingRealtimeRef.current) {
+       isCheckingRealtimeRef.current = true;
+       setConnections(prev => ({ ...prev, realtime: "checking" }));
+       
+       // Clean up any existing channel first
+       if (realtimeChannelRef.current) {
+         supabase.removeChannel(realtimeChannelRef.current);
+         realtimeChannelRef.current = null;
+       }
+       
+       const channelName = `connection-test-${Date.now()}`;
+       const channel = supabase.channel(channelName);
+       realtimeChannelRef.current = channel;
+       
+       const timeoutId = setTimeout(() => {
+         if (realtimeChannelRef.current === channel) {
+           setConnections(prev => ({ ...prev, realtime: "disconnected" }));
+           supabase.removeChannel(channel);
+           realtimeChannelRef.current = null;
+           isCheckingRealtimeRef.current = false;
+         }
+       }, 5000);
+       
+       channel.subscribe((status) => {
+         clearTimeout(timeoutId);
+         if (realtimeChannelRef.current === channel) {
+           setConnections(prev => ({
+             ...prev,
+             realtime: status === "SUBSCRIBED" ? "connected" : "disconnected",
+           }));
+           // Keep channel subscribed for a moment then clean up
+           setTimeout(() => {
+             if (realtimeChannelRef.current === channel) {
+               supabase.removeChannel(channel);
+               realtimeChannelRef.current = null;
+               isCheckingRealtimeRef.current = false;
+             }
+           }, 1000);
+         }
+       });
+     }
 
     // Check local server if configured
     const savedConfig = localStorage.getItem(STORAGE_KEY_SERVER);
@@ -93,15 +128,22 @@ export function ConnectionStatusIndicator() {
     }
 
     setLastChecked(new Date());
-  };
+   }, []);
 
   useEffect(() => {
     checkConnections();
     
     // Re-check every 30 seconds
     const interval = setInterval(checkConnections, 30000);
-    return () => clearInterval(interval);
-  }, []);
+     return () => {
+       clearInterval(interval);
+       // Clean up realtime channel on unmount
+       if (realtimeChannelRef.current) {
+         supabase.removeChannel(realtimeChannelRef.current);
+         realtimeChannelRef.current = null;
+       }
+     };
+   }, [checkConnections]);
 
   const getOverallStatus = () => {
     if (connections.cloud === "checking" || connections.database === "checking") {
