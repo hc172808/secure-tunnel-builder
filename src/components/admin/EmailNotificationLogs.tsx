@@ -4,6 +4,7 @@
  import { Badge } from "@/components/ui/badge";
  import { ScrollArea } from "@/components/ui/scroll-area";
  import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
  import { 
  RefreshCw, 
  Mail, 
@@ -14,7 +15,11 @@
  Wifi,
  WifiOff,
  Plus,
- UserMinus
+UserMinus,
+ChevronLeft,
+ChevronRight,
+ChevronsLeft,
+ChevronsRight
  } from "lucide-react";
  import { supabase } from "@/integrations/supabase/client";
  import { toast } from "sonner";
@@ -44,18 +49,50 @@
    sent_at: string | null;
  }
  
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
  export function EmailNotificationLogs() {
    const [logs, setLogs] = useState<EmailLog[]>([]);
    const [loading, setLoading] = useState(true);
    const [refreshing, setRefreshing] = useState(false);
+   const [currentPage, setCurrentPage] = useState(1);
+   const [pageSize, setPageSize] = useState(25);
+   const [totalCount, setTotalCount] = useState(0);
+   const [stats, setStats] = useState({ total: 0, sent: 0, failed: 0, pending: 0 });
  
-   const fetchLogs = async () => {
+   const fetchLogs = async (page = currentPage, size = pageSize) => {
      try {
+       // Fetch total count and stats
+       const { count, error: countError } = await supabase
+         .from("email_notification_logs")
+         .select("*", { count: "exact", head: true });
+ 
+       if (countError) throw countError;
+       setTotalCount(count || 0);
+ 
+       // Fetch stats
+       const { data: allLogs } = await supabase
+         .from("email_notification_logs")
+         .select("status");
+       
+       if (allLogs) {
+         setStats({
+           total: allLogs.length,
+           sent: allLogs.filter(l => l.status === "sent").length,
+           failed: allLogs.filter(l => l.status === "failed").length,
+           pending: allLogs.filter(l => l.status === "pending").length,
+         });
+       }
+ 
+       // Fetch paginated logs
+       const from = (page - 1) * size;
+       const to = from + size - 1;
+ 
        const { data, error } = await supabase
          .from("email_notification_logs")
          .select("*")
          .order("created_at", { ascending: false })
-         .limit(100);
+         .range(from, to);
  
        if (error) throw error;
        setLogs((data as EmailLog[]) || []);
@@ -70,11 +107,11 @@
  
    useEffect(() => {
      fetchLogs();
-   }, []);
+   }, [currentPage, pageSize]);
  
    const handleRefresh = () => {
      setRefreshing(true);
-     fetchLogs();
+     fetchLogs(currentPage, pageSize);
    };
  
    const clearAllLogs = async () => {
@@ -86,6 +123,9 @@
  
        if (error) throw error;
        setLogs([]);
+       setTotalCount(0);
+       setStats({ total: 0, sent: 0, failed: 0, pending: 0 });
+       setCurrentPage(1);
        toast.success("All logs cleared");
      } catch (error) {
        console.error("Error clearing logs:", error);
@@ -151,11 +191,18 @@
      }
    };
  
-   const stats = {
-     total: logs.length,
-     sent: logs.filter(l => l.status === "sent").length,
-     failed: logs.filter(l => l.status === "failed").length,
-     pending: logs.filter(l => l.status === "pending").length,
+   const totalPages = Math.ceil(totalCount / pageSize);
+ 
+   const goToPage = (page: number) => {
+     if (page >= 1 && page <= totalPages) {
+       setCurrentPage(page);
+     }
+   };
+ 
+   const handlePageSizeChange = (value: string) => {
+     const newSize = parseInt(value);
+     setPageSize(newSize);
+     setCurrentPage(1);
    };
  
    if (loading) {
@@ -263,7 +310,8 @@
              </p>
            </div>
          ) : (
-           <ScrollArea className="h-[400px]">
+             <>
+             <ScrollArea className="h-[350px]">
              <div className="space-y-3">
                {logs.map((log) => (
                  <div
@@ -307,6 +355,75 @@
                ))}
              </div>
            </ScrollArea>
+             
+             {/* Pagination Controls */}
+             <div className="flex items-center justify-between pt-4 border-t border-border mt-4">
+               <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                 <span>Rows per page:</span>
+                 <Select value={pageSize.toString()} onValueChange={handlePageSizeChange}>
+                   <SelectTrigger className="w-[70px] h-8">
+                     <SelectValue />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {PAGE_SIZE_OPTIONS.map((size) => (
+                       <SelectItem key={size} value={size.toString()}>
+                         {size}
+                       </SelectItem>
+                     ))}
+                   </SelectContent>
+                 </Select>
+               </div>
+ 
+               <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                 <span>
+                   Page {currentPage} of {totalPages || 1}
+                 </span>
+                 <span className="mx-2">•</span>
+                 <span>
+                   {((currentPage - 1) * pageSize) + 1}-{Math.min(currentPage * pageSize, totalCount)} of {totalCount}
+                 </span>
+               </div>
+ 
+               <div className="flex items-center gap-1">
+                 <Button
+                   variant="outline"
+                   size="icon"
+                   className="h-8 w-8"
+                   onClick={() => goToPage(1)}
+                   disabled={currentPage === 1}
+                 >
+                   <ChevronsLeft className="h-4 w-4" />
+                 </Button>
+                 <Button
+                   variant="outline"
+                   size="icon"
+                   className="h-8 w-8"
+                   onClick={() => goToPage(currentPage - 1)}
+                   disabled={currentPage === 1}
+                 >
+                   <ChevronLeft className="h-4 w-4" />
+                 </Button>
+                 <Button
+                   variant="outline"
+                   size="icon"
+                   className="h-8 w-8"
+                   onClick={() => goToPage(currentPage + 1)}
+                   disabled={currentPage >= totalPages}
+                 >
+                   <ChevronRight className="h-4 w-4" />
+                 </Button>
+                 <Button
+                   variant="outline"
+                   size="icon"
+                   className="h-8 w-8"
+                   onClick={() => goToPage(totalPages)}
+                   disabled={currentPage >= totalPages}
+                 >
+                   <ChevronsRight className="h-4 w-4" />
+                 </Button>
+               </div>
+             </div>
+             </>
          )}
        </CardContent>
      </Card>
