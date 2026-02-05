@@ -15,7 +15,7 @@ import { AdminConsole } from "@/components/admin/AdminConsole";
 import { AdminInvitations } from "@/components/admin/AdminInvitations";
 import { AdminPeerRequests } from "@/components/admin/AdminPeerRequests";
 import { PeerNotifications } from "@/components/admin/PeerNotifications";
-import { AdminNoIP } from "@/components/admin/AdminNoIP";
+ import { AdminDynamicDNS } from "@/components/admin/AdminDynamicDNS";
 import { AdminPeerGroups } from "@/components/admin/AdminPeerGroups";
 import { AdminNodeDomains } from "@/components/admin/AdminNodeDomains";
 import { DnsValidation } from "@/components/DnsValidation";
@@ -115,7 +115,7 @@ export default function Admin() {
             </TabsTrigger>
             <TabsTrigger value="noip" className="flex items-center gap-2">
               <Globe className="h-4 w-4" />
-              <span className="hidden sm:inline">No-IP</span>
+               <span className="hidden sm:inline">DDNS</span>
             </TabsTrigger>
             <TabsTrigger value="domains" className="flex items-center gap-2">
               <Network className="h-4 w-4" />
@@ -176,7 +176,7 @@ export default function Admin() {
           </TabsContent>
 
           <TabsContent value="noip">
-            <AdminNoIP />
+             <AdminDynamicDNS />
           </TabsContent>
 
           <TabsContent value="domains">
