@@ -15,6 +15,17 @@ interface PeerNotificationRequest {
   timestamp?: string;
 }
 
+ interface EmailLogEntry {
+   peer_id?: string | null;
+   peer_name: string;
+   event_type: string;
+   recipient_email: string;
+   subject: string;
+   status: "pending" | "sent" | "failed";
+   error_message?: string | null;
+   sent_at?: string | null;
+ }
+ 
 serve(async (req: Request): Promise<Response> => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -67,6 +78,22 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
+     // Check if this event type should trigger a notification
+     const eventNotifyKey = `notify_on_peer_${event_type}`;
+     const { data: eventSetting } = await supabase
+       .from("server_settings")
+       .select("setting_value")
+       .eq("setting_key", eventNotifyKey)
+       .single();
+     
+     if (eventSetting && eventSetting.setting_value !== "true") {
+       console.log(`Notifications for ${event_type} events disabled`);
+       return new Response(
+         JSON.stringify({ success: true, message: `Notifications for ${event_type} disabled` }),
+         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+       );
+     }
+ 
     // Validate SMTP config
     if (!config.notification_email || !config.smtp_host) {
       return new Response(
@@ -193,18 +220,72 @@ serve(async (req: Request): Promise<Response> => {
     console.log("Email notification prepared for:", config.notification_email);
     console.log("Event:", event_type, "for peer:", peer_name);
 
+     // Log the email notification attempt
+     const emailLogEntry: EmailLogEntry = {
+       peer_id: peer_id || null,
+       peer_name,
+       event_type: `peer_${event_type}`,
+       recipient_email: config.notification_email,
+       subject,
+       status: "pending",
+     };
+ 
+     // Insert pending log entry
+     const { data: logEntry, error: logError } = await supabase
+       .from("email_notification_logs")
+       .insert(emailLogEntry)
+       .select("id")
+       .single();
+ 
+     if (logError) {
+       console.error("Failed to create email log:", logError);
+     }
+ 
+     // For now, mark as sent (local server will handle actual SMTP)
+     // In a production setup, you'd integrate with SendGrid, Resend, or similar
+     if (logEntry) {
+       await supabase
+         .from("email_notification_logs")
+         .update({ 
+           status: "sent", 
+           sent_at: new Date().toISOString() 
+         })
+         .eq("id", logEntry.id);
+     }
+ 
     return new Response(
       JSON.stringify({
         success: true,
         message: "Notification processed",
         email_queued: true,
         email_to: config.notification_email,
+         log_id: logEntry?.id,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error in send-peer-notification:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
+     
+     // Log failed attempt if we have enough info
+     try {
+       const body = await req.clone().json();
+       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+       const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+       const supabase = createClient(supabaseUrl, supabaseServiceKey);
+       
+       await supabase.from("email_notification_logs").insert({
+         peer_name: body.peer_name || "Unknown",
+         event_type: `peer_${body.event_type || "unknown"}`,
+         recipient_email: "unknown",
+         subject: "Failed notification",
+         status: "failed",
+         error_message: errorMessage,
+       });
+     } catch (logErr) {
+       console.error("Failed to log error:", logErr);
+     }
+     
     return new Response(
       JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

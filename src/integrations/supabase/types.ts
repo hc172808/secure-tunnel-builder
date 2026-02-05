@@ -47,6 +47,53 @@ export type Database = {
         }
         Relationships: []
       }
+      email_notification_logs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          event_type: string
+          id: string
+          peer_id: string | null
+          peer_name: string
+          recipient_email: string
+          sent_at: string | null
+          status: string
+          subject: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          event_type: string
+          id?: string
+          peer_id?: string | null
+          peer_name: string
+          recipient_email: string
+          sent_at?: string | null
+          status?: string
+          subject: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          event_type?: string
+          id?: string
+          peer_id?: string | null
+          peer_name?: string
+          recipient_email?: string
+          sent_at?: string | null
+          status?: string
+          subject?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_notification_logs_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "wireguard_peers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       firewall_rules: {
         Row: {
           action: string | null
