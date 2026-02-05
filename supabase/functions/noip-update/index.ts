@@ -23,7 +23,7 @@ interface NoIPUpdateResponse {
 const NOIP_RESPONSE_CODES: Record<string, { success: boolean; message: string }> = {
   'good': { success: true, message: 'IP address updated successfully' },
   'nochg': { success: true, message: 'IP address has not changed' },
-  'nohost': { success: false, message: 'Hostname not found in your account' },
+   'nohost': { success: false, message: 'Hostname not found in your No-IP account. Note: No-IP uses specific domains like *.ddns.net, *.hopto.org, *.zapto.org - custom domains like .com are not supported unless you have a paid No-IP Plus Managed DNS plan' },
   'badauth': { success: false, message: 'Invalid username/password' },
   'badagent': { success: false, message: 'Client blocked by No-IP' },
   '!donator': { success: false, message: 'Feature not available for free accounts' },
