@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Globe, RefreshCw, Eye, EyeOff, Save, ExternalLink, CheckCircle, AlertCircle, Clock, Play, Pause, Info } from "lucide-react";
 import { DDNSUpdateHistory } from "./DDNSUpdateHistory";
 import { DDNSMultiHostname } from "./DDNSMultiHostname";
+import { DDNSHealthMonitor } from "./DDNSHealthMonitor";
  import { Button } from "@/components/ui/button";
  import { Input } from "@/components/ui/input";
  import { Label } from "@/components/ui/label";
@@ -976,6 +977,9 @@ import { DDNSMultiHostname } from "./DDNSMultiHostname";
 
         {/* Multiple Hostnames */}
         <DDNSMultiHostname />
+
+        {/* Health Monitoring */}
+        <DDNSHealthMonitor />
 
         {/* Update History */}
         <DDNSUpdateHistory />
