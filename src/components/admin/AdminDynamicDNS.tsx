@@ -1,5 +1,7 @@
- import { useState, useEffect, useCallback, useRef } from "react";
- import { Globe, RefreshCw, Eye, EyeOff, Save, ExternalLink, CheckCircle, AlertCircle, Clock, Play, Pause, Info } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Globe, RefreshCw, Eye, EyeOff, Save, ExternalLink, CheckCircle, AlertCircle, Clock, Play, Pause, Info } from "lucide-react";
+import { DDNSUpdateHistory } from "./DDNSUpdateHistory";
+import { DDNSMultiHostname } from "./DDNSMultiHostname";
  import { Button } from "@/components/ui/button";
  import { Input } from "@/components/ui/input";
  import { Label } from "@/components/ui/label";
@@ -969,8 +971,14 @@
                </div>
              ))}
            </div>
-         </CardContent>
-       </Card>
-     </div>
-   );
- }
+          </CardContent>
+        </Card>
+
+        {/* Multiple Hostnames */}
+        <DDNSMultiHostname />
+
+        {/* Update History */}
+        <DDNSUpdateHistory />
+      </div>
+    );
+  }
