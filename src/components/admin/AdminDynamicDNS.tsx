@@ -4,6 +4,7 @@ import { DDNSUpdateHistory } from "./DDNSUpdateHistory";
 import { DDNSMultiHostname } from "./DDNSMultiHostname";
 import { DDNSHealthMonitor } from "./DDNSHealthMonitor";
 import { DDNSCronSchedule } from "./DDNSCronSchedule";
+import { DDNSPropagationMonitor } from "./DDNSPropagationMonitor";
  import { Button } from "@/components/ui/button";
  import { Input } from "@/components/ui/input";
  import { Label } from "@/components/ui/label";
@@ -984,6 +985,9 @@ import { DDNSCronSchedule } from "./DDNSCronSchedule";
 
         {/* Health Monitoring */}
         <DDNSHealthMonitor />
+
+        {/* DNS Propagation Monitor */}
+        <DDNSPropagationMonitor />
 
         {/* Update History */}
         <DDNSUpdateHistory />
