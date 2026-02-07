@@ -3,6 +3,7 @@ import { Globe, RefreshCw, Eye, EyeOff, Save, ExternalLink, CheckCircle, AlertCi
 import { DDNSUpdateHistory } from "./DDNSUpdateHistory";
 import { DDNSMultiHostname } from "./DDNSMultiHostname";
 import { DDNSHealthMonitor } from "./DDNSHealthMonitor";
+import { DDNSCronSchedule } from "./DDNSCronSchedule";
  import { Button } from "@/components/ui/button";
  import { Input } from "@/components/ui/input";
  import { Label } from "@/components/ui/label";
@@ -977,6 +978,9 @@ import { DDNSHealthMonitor } from "./DDNSHealthMonitor";
 
         {/* Multiple Hostnames */}
         <DDNSMultiHostname />
+
+        {/* Scheduled Updates (Cron) */}
+        <DDNSCronSchedule />
 
         {/* Health Monitoring */}
         <DDNSHealthMonitor />
