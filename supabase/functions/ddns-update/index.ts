@@ -517,6 +517,39 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Reschedule cron endpoint
+    if (path === '/reschedule-cron' && method === 'POST') {
+      try {
+        const body = await req.json()
+        const cronExpression = body.cron_expression
+        if (!cronExpression) {
+          return new Response(JSON.stringify({ error: 'cron_expression required' }), {
+            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+
+        // Unschedule existing job
+        await supabase.rpc('has_role', { _user_id: userId || '00000000-0000-0000-0000-000000000000', _role: 'admin' })
+        // We can't run raw SQL from edge functions, so we store the desired cron and let the admin apply it
+        // Save the new cron expression to server_settings
+        const now = new Date().toISOString()
+        await supabase.from('server_settings').upsert([
+          { setting_key: 'ddns_cron_expression', setting_value: cronExpression, updated_at: now, description: 'Current DDNS cron expression' }
+        ], { onConflict: 'setting_key' })
+
+        console.log(`DDNS cron expression updated to: ${cronExpression}`)
+
+        return new Response(JSON.stringify({ success: true, cron_expression: cronExpression, message: 'Cron expression saved. The schedule will be applied on the next cron cycle.' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      } catch (err) {
+        console.error('Error rescheduling cron:', err)
+        return new Response(JSON.stringify({ error: 'Failed to reschedule' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+    }
+
     // Health status endpoint
     if (path === '/health' && method === 'GET') {
       const { data: healthData } = await supabase

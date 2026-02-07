@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { DDNSStatusWidget } from "@/components/DDNSStatusWidget";
 
 interface HealthMetrics {
   database: {
@@ -330,6 +331,9 @@ export function SystemHealthDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* DDNS Status Widget */}
+      <DDNSStatusWidget />
 
       {/* Local Server Status */}
       <Card className="gradient-border">
