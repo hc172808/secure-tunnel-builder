@@ -534,6 +534,11 @@ done
         echo "Auto-assigned hostname: ${hostname}"
     fi
     
+# Sync DDNS cron interval from database
+if [ -x /opt/wireguard-manager/ddns-update.sh ]; then
+    /opt/wireguard-manager/ddns-update.sh sync-cron >> /var/log/ddns-update.log 2>&1
+fi
+
 echo "$(date): Sync completed" >> /var/log/wg-sync.log
 SYNCEOF
     
@@ -779,8 +784,8 @@ PEEREOF
     
     chmod +x ${INSTALL_DIR}/manage-peer.sh
     
-    # Create No-IP update script
-    cat > ${INSTALL_DIR}/noip-update.sh <<'NOIPEOF'
+    # Create multi-provider DDNS update script
+    cat > ${INSTALL_DIR}/ddns-update.sh <<'DDNSEOF'
 #!/bin/bash
 
 source /opt/wireguard-manager/config.env
@@ -789,15 +794,11 @@ source /opt/wireguard-manager/config.env
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Get current public IP
-get_current_ip() {
-    curl -s https://api.ipify.org 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null || echo ""
-}
-
-# Get No-IP settings from database
-get_noip_setting() {
+# Get setting from database
+get_setting() {
     local key=$1
     export PGPASSWORD="${DB_PASSWORD}"
     psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
@@ -805,8 +806,8 @@ get_noip_setting() {
     " 2>/dev/null | tr -d ' '
 }
 
-# Save No-IP setting to database
-save_noip_setting() {
+# Save setting to database
+save_setting() {
     local key=$1
     local value=$2
     export PGPASSWORD="${DB_PASSWORD}"
@@ -819,167 +820,525 @@ save_noip_setting() {
     " 2>/dev/null
 }
 
-# Update No-IP DNS
+# Get current public IP
+get_current_ip() {
+    curl -s https://api.ipify.org 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null || echo ""
+}
+
+# ─── Provider: No-IP ───────────────────────────────────────────
 update_noip() {
-    local noip_enabled=$(get_noip_setting "noip_enabled")
-    local noip_username=$(get_noip_setting "noip_username")
-    local noip_password=$(get_noip_setting "noip_password")
-    local noip_hostname=$(get_noip_setting "noip_hostname")
-    local last_ip=$(get_noip_setting "noip_last_ip")
-    
-    if [ "${noip_enabled}" != "true" ]; then
-        echo -e "${YELLOW}No-IP is disabled${NC}"
+    local username=$1
+    local password=$2
+    local hostname=$3
+    local current_ip=$4
+
+    local response=$(curl -s -u "${username}:${password}" \
+        -A "WireGuard-Manager/1.0 admin@wireguard-manager.local" \
+        "https://dynupdate.no-ip.com/nic/update?hostname=${hostname}&myip=${current_ip}")
+
+    local code=$(echo "${response}" | awk '{print $1}' | tr -d '\r\n')
+    case "${code}" in
+        good|nochg) echo "OK"; return 0 ;;
+        *) echo "${response}"; return 1 ;;
+    esac
+}
+
+# ─── Provider: DuckDNS ─────────────────────────────────────────
+update_duckdns() {
+    local token=$1
+    local hostname=$2
+    local current_ip=$3
+
+    # DuckDNS hostname is the subdomain part only (before .duckdns.org)
+    local subdomain=$(echo "${hostname}" | sed 's/\.duckdns\.org$//')
+
+    local response=$(curl -s "https://www.duckdns.org/update?domains=${subdomain}&token=${token}&ip=${current_ip}")
+
+    if [ "${response}" = "OK" ]; then
+        echo "OK"; return 0
+    else
+        echo "${response}"; return 1
+    fi
+}
+
+# ─── Provider: Dynu ────────────────────────────────────────────
+update_dynu() {
+    local username=$1
+    local password=$2
+    local hostname=$3
+    local current_ip=$4
+
+    local response=$(curl -s -u "${username}:${password}" \
+        -A "WireGuard-Manager/1.0" \
+        "https://api.dynu.com/nic/update?hostname=${hostname}&myip=${current_ip}")
+
+    local code=$(echo "${response}" | awk '{print $1}' | tr -d '\r\n')
+    case "${code}" in
+        good|nochg) echo "OK"; return 0 ;;
+        *) echo "${response}"; return 1 ;;
+    esac
+}
+
+# ─── Provider: FreeDNS ─────────────────────────────────────────
+update_freedns() {
+    local update_key=$1
+    local current_ip=$2
+
+    local response=$(curl -s "https://freedns.afraid.org/dynamic/update.php?${update_key}&address=${current_ip}")
+
+    if echo "${response}" | grep -qi "Updated\|has not changed"; then
+        echo "OK"; return 0
+    else
+        echo "${response}"; return 1
+    fi
+}
+
+# ─── Provider: Cloudflare ──────────────────────────────────────
+update_cloudflare() {
+    local api_token=$1
+    local zone_id=$2
+    local hostname=$3
+    local current_ip=$4
+
+    # Get record ID
+    local record_response=$(curl -s -X GET \
+        "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?name=${hostname}&type=A" \
+        -H "Authorization: Bearer ${api_token}" \
+        -H "Content-Type: application/json")
+
+    local record_id=$(echo "${record_response}" | jq -r '.result[0].id // empty')
+
+    if [ -z "${record_id}" ]; then
+        # Create new A record
+        local create_response=$(curl -s -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+            -H "Authorization: Bearer ${api_token}" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"A\",\"name\":\"${hostname}\",\"content\":\"${current_ip}\",\"ttl\":120,\"proxied\":false}")
+
+        if echo "${create_response}" | jq -e '.success' > /dev/null 2>&1; then
+            echo "OK"; return 0
+        else
+            echo "${create_response}"; return 1
+        fi
+    else
+        # Update existing record
+        local update_response=$(curl -s -X PUT \
+            "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${record_id}" \
+            -H "Authorization: Bearer ${api_token}" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"A\",\"name\":\"${hostname}\",\"content\":\"${current_ip}\",\"ttl\":120,\"proxied\":false}")
+
+        if echo "${update_response}" | jq -e '.success' > /dev/null 2>&1; then
+            echo "OK"; return 0
+        else
+            echo "${update_response}"; return 1
+        fi
+    fi
+}
+
+# ─── Provider: Custom ──────────────────────────────────────────
+update_custom() {
+    local update_url=$1
+    local current_ip=$2
+
+    # Replace placeholders in URL
+    local final_url=$(echo "${update_url}" | sed "s/{ip}/${current_ip}/g" | sed "s/{IP}/${current_ip}/g")
+
+    local response=$(curl -s "${final_url}")
+    echo "${response}"
+    return 0
+}
+
+# ─── Main Update Logic ─────────────────────────────────────────
+do_update() {
+    local provider=$(get_setting "ddns_provider")
+    local enabled=$(get_setting "noip_enabled")
+    local hostname=$(get_setting "noip_hostname")
+    local last_ip=$(get_setting "noip_last_ip")
+
+    provider=${provider:-noip}
+
+    if [ "${enabled}" != "true" ]; then
+        echo -e "${YELLOW}DDNS is disabled${NC}"
         return 1
     fi
-    
-    if [ -z "${noip_username}" ] || [ -z "${noip_password}" ] || [ -z "${noip_hostname}" ]; then
-        echo -e "${RED}No-IP credentials not configured${NC}"
+
+    if [ -z "${hostname}" ]; then
+        echo -e "${RED}DDNS hostname not configured${NC}"
         return 1
     fi
-    
+
     local current_ip=$(get_current_ip)
-    
+    if [ -z "${current_ip}" ]; then
+        echo -e "${RED}Failed to detect current IP${NC}"
+        record_failure "ip_detection_failed"
+        return 1
+    fi
+
+    echo "Provider: ${provider}"
+    echo "Hostname: ${hostname}"
+    echo "Current IP: ${current_ip}"
+    echo "Last IP: ${last_ip:-None}"
+
+    # Skip if IP unchanged
+    if [ "${current_ip}" = "${last_ip}" ]; then
+        echo -e "${YELLOW}IP unchanged, skipping update${NC}"
+        save_setting "noip_last_update" "$(date -Iseconds)"
+        reset_failures
+        return 0
+    fi
+
+    echo "Updating DDNS..."
+
+    local result=""
+    local success=false
+
+    case "${provider}" in
+        noip)
+            local username=$(get_setting "noip_username")
+            local password=$(get_setting "noip_password")
+            result=$(update_noip "${username}" "${password}" "${hostname}" "${current_ip}")
+            [ "$?" -eq 0 ] && success=true
+            ;;
+        duckdns)
+            local token=$(get_setting "ddns_duckdns_token")
+            result=$(update_duckdns "${token}" "${hostname}" "${current_ip}")
+            [ "$?" -eq 0 ] && success=true
+            ;;
+        dynu)
+            local username=$(get_setting "ddns_dynu_username")
+            local password=$(get_setting "ddns_dynu_password")
+            result=$(update_dynu "${username}" "${password}" "${hostname}" "${current_ip}")
+            [ "$?" -eq 0 ] && success=true
+            ;;
+        freedns)
+            local update_key=$(get_setting "ddns_freedns_update_key")
+            result=$(update_freedns "${update_key}" "${current_ip}")
+            [ "$?" -eq 0 ] && success=true
+            ;;
+        cloudflare)
+            local api_token=$(get_setting "ddns_cloudflare_api_token")
+            local zone_id=$(get_setting "ddns_cloudflare_zone_id")
+            result=$(update_cloudflare "${api_token}" "${zone_id}" "${hostname}" "${current_ip}")
+            [ "$?" -eq 0 ] && success=true
+            ;;
+        custom)
+            local update_url=$(get_setting "ddns_custom_update_url")
+            result=$(update_custom "${update_url}" "${current_ip}")
+            success=true
+            ;;
+        *)
+            echo -e "${RED}Unknown provider: ${provider}${NC}"
+            return 1
+            ;;
+    esac
+
+    echo "Response: ${result}"
+
+    if ${success}; then
+        echo -e "${GREEN}✓ DDNS updated successfully!${NC}"
+        save_setting "noip_last_ip" "${current_ip}"
+        save_setting "noip_last_update" "$(date -Iseconds)"
+        save_setting "noip_last_response" "${result}"
+        reset_failures
+        return 0
+    else
+        echo -e "${RED}✗ DDNS update failed${NC}"
+        save_setting "noip_last_response" "${result}"
+        record_failure "${result}"
+        return 1
+    fi
+}
+
+# ─── Health Tracking ────────────────────────────────────────────
+record_failure() {
+    local reason=$1
+    local failures=$(get_setting "ddns_consecutive_failures")
+    failures=$((${failures:-0} + 1))
+    save_setting "ddns_consecutive_failures" "${failures}"
+    local threshold=$(get_setting "ddns_failure_alert_threshold")
+    threshold=${threshold:-3}
+
+    echo "$(date): DDNS failure #${failures}: ${reason}" >> /var/log/ddns-update.log
+
+    if [ ${failures} -ge ${threshold} ]; then
+        echo -e "${RED}⚠ CRITICAL: ${failures} consecutive failures (threshold: ${threshold})${NC}"
+        # Trigger email alert via local API
+        curl -s -X POST "http://localhost:3001/internal/email-notify" \
+            -H "Content-Type: application/json" \
+            -d "{\"peer_name\": \"DDNS Health Alert\", \"event_type\": \"ddns_failure\", \"peer_ip\": \"Failures: ${failures}\"}" \
+            2>/dev/null || true
+    fi
+}
+
+reset_failures() {
+    save_setting "ddns_consecutive_failures" "0"
+}
+
+# ─── Configurable Cron ─────────────────────────────────────────
+setup_cron() {
+    local interval=$1
+
+    if [ -z "${interval}" ]; then
+        # Read from database
+        interval=$(get_setting "ddns_cron_interval")
+        interval=${interval:-30}
+    fi
+
+    # Remove existing ddns cron entries
+    crontab -l 2>/dev/null | grep -v "ddns-update.sh" | crontab -
+
+    # Add new cron
+    (crontab -l 2>/dev/null; echo "*/${interval} * * * * /opt/wireguard-manager/ddns-update.sh update >> /var/log/ddns-update.log 2>&1") | crontab -
+
+    # Save interval to database
+    save_setting "ddns_cron_interval" "${interval}"
+
+    echo -e "${GREEN}✓ DDNS cron configured (every ${interval} minutes)${NC}"
+}
+
+sync_cron() {
+    # Read interval from database and update local cron job
+    local interval=$(get_setting "ddns_cron_interval")
+    interval=${interval:-30}
+
+    # Check if cron is already set to this interval
+    local current_cron=$(crontab -l 2>/dev/null | grep "ddns-update.sh" || true)
+    local expected="*/${interval} * * * * /opt/wireguard-manager/ddns-update.sh update >> /var/log/ddns-update.log 2>&1"
+
+    if [ "${current_cron}" != "${expected}" ]; then
+        setup_cron "${interval}"
+        echo "Cron synced to database interval: ${interval} minutes"
+    else
+        echo "Cron already in sync (${interval} minutes)"
+    fi
+}
+
+disable_cron() {
+    crontab -l 2>/dev/null | grep -v "ddns-update.sh" | crontab -
+    echo "DDNS auto-update disabled"
+}
+
+# ─── Multi-Hostname Update ─────────────────────────────────────
+update_all_hostnames() {
+    export PGPASSWORD="${DB_PASSWORD}"
+    local hostnames=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_value FROM server_settings 
+        WHERE setting_key LIKE 'ddns_hostname_%' 
+        ORDER BY setting_key;
+    " 2>/dev/null)
+
+    local provider=$(get_setting "ddns_provider")
+    local current_ip=$(get_current_ip)
+
     if [ -z "${current_ip}" ]; then
         echo -e "${RED}Failed to detect current IP${NC}"
         return 1
     fi
-    
-    echo "Current IP: ${current_ip}"
-    echo "Last IP: ${last_ip:-None}"
-    
-    # Check if IP has changed
-    if [ "${current_ip}" = "${last_ip}" ]; then
-        echo -e "${YELLOW}IP has not changed, skipping update${NC}"
-        save_noip_setting "noip_last_update" "$(date -Iseconds)"
-        return 0
-    fi
-    
-    echo "Updating No-IP hostname: ${noip_hostname}..."
-    
-    # Call No-IP Dynamic Update API
-    local response=$(curl -s -u "${noip_username}:${noip_password}" \
-        -A "WireGuard-Manager/1.0 admin@wireguard-manager.local" \
-        "https://dynupdate.no-ip.com/nic/update?hostname=${noip_hostname}&myip=${current_ip}")
-    
-    echo "Response: ${response}"
-    
-    # Parse response
-    local response_code=$(echo "${response}" | awk '{print $1}')
-    
-    case "${response_code}" in
-        good|nochg)
-            echo -e "${GREEN}✓ No-IP updated successfully!${NC}"
-            save_noip_setting "noip_last_ip" "${current_ip}"
-            save_noip_setting "noip_last_update" "$(date -Iseconds)"
-            save_noip_setting "noip_last_response" "${response}"
-            return 0
-            ;;
-        nohost)
-            echo -e "${RED}✗ Hostname not found${NC}"
-            ;;
-        badauth)
-            echo -e "${RED}✗ Invalid username/password${NC}"
-            ;;
-        badagent)
-            echo -e "${RED}✗ Client blocked by No-IP${NC}"
-            ;;
-        abuse)
-            echo -e "${RED}✗ Hostname blocked due to abuse${NC}"
-            ;;
-        911)
-            echo -e "${RED}✗ No-IP server error${NC}"
-            ;;
-        *)
-            echo -e "${YELLOW}Unknown response: ${response}${NC}"
-            ;;
-    esac
-    
-    save_noip_setting "noip_last_response" "${response}"
-    return 1
+
+    local count=0
+    local success_count=0
+
+    # Update primary hostname
+    do_update
+    [ $? -eq 0 ] && ((success_count++))
+    ((count++))
+
+    # Update additional hostnames
+    while read -r extra_hostname; do
+        extra_hostname=$(echo "${extra_hostname}" | tr -d ' ')
+        [ -z "${extra_hostname}" ] && continue
+
+        echo ""
+        echo "Updating additional hostname: ${extra_hostname}"
+        
+        local result=""
+        case "${provider}" in
+            noip)
+                local username=$(get_setting "noip_username")
+                local password=$(get_setting "noip_password")
+                result=$(update_noip "${username}" "${password}" "${extra_hostname}" "${current_ip}")
+                ;;
+            duckdns)
+                local token=$(get_setting "ddns_duckdns_token")
+                result=$(update_duckdns "${token}" "${extra_hostname}" "${current_ip}")
+                ;;
+            dynu)
+                local username=$(get_setting "ddns_dynu_username")
+                local password=$(get_setting "ddns_dynu_password")
+                result=$(update_dynu "${username}" "${password}" "${extra_hostname}" "${current_ip}")
+                ;;
+            cloudflare)
+                local api_token=$(get_setting "ddns_cloudflare_api_token")
+                local zone_id=$(get_setting "ddns_cloudflare_zone_id")
+                result=$(update_cloudflare "${api_token}" "${zone_id}" "${extra_hostname}" "${current_ip}")
+                ;;
+        esac
+
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ ${extra_hostname} updated${NC}"
+            ((success_count++))
+        else
+            echo -e "${RED}✗ ${extra_hostname} failed: ${result}${NC}"
+        fi
+        ((count++))
+    done <<< "${hostnames}"
+
+    echo ""
+    echo "Updated ${success_count}/${count} hostnames"
 }
 
-# Status check
+# ─── Status ─────────────────────────────────────────────────────
 check_status() {
-    local noip_enabled=$(get_noip_setting "noip_enabled")
-    local noip_hostname=$(get_noip_setting "noip_hostname")
-    local last_ip=$(get_noip_setting "noip_last_ip")
-    local last_update=$(get_noip_setting "noip_last_update")
-    local auto_update=$(get_noip_setting "noip_auto_update_enabled")
-    local interval=$(get_noip_setting "noip_update_interval")
+    local enabled=$(get_setting "noip_enabled")
+    local provider=$(get_setting "ddns_provider")
+    local hostname=$(get_setting "noip_hostname")
+    local last_ip=$(get_setting "noip_last_ip")
+    local last_update=$(get_setting "noip_last_update")
+    local interval=$(get_setting "ddns_cron_interval")
+    local failures=$(get_setting "ddns_consecutive_failures")
+    local threshold=$(get_setting "ddns_failure_alert_threshold")
     local current_ip=$(get_current_ip)
-    
+
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                   No-IP DNS Status                           ║"
+    echo "║                  Dynamic DNS Status                          ║"
     echo "╠══════════════════════════════════════════════════════════════╣"
-    echo "║  Enabled:       ${noip_enabled:-false}"
-    echo "║  Hostname:      ${noip_hostname:-Not configured}"
+    echo "║  Enabled:       ${enabled:-false}"
+    echo "║  Provider:      ${provider:-noip}"
+    echo "║  Hostname:      ${hostname:-Not configured}"
     echo "║  Current IP:    ${current_ip:-Unknown}"
     echo "║  Last IP:       ${last_ip:-Never updated}"
     echo "║  Last Update:   ${last_update:-Never}"
-    echo "║  Auto Update:   ${auto_update:-false}"
-    echo "║  Interval:      ${interval:-30} minutes"
+    echo "║  Cron Interval: ${interval:-30} minutes"
+    echo "║  Failures:      ${failures:-0} (threshold: ${threshold:-3})"
     if [ "${current_ip}" != "${last_ip}" ] && [ -n "${last_ip}" ]; then
-        echo "║  ⚠ IP has changed! Run 'wg-noip update' to sync"
+        echo "║  ⚠ IP has changed! Run 'wg-ddns update' to sync"
     fi
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
-}
 
-# Configure No-IP
-configure() {
-    echo "No-IP Configuration"
-    echo "==================="
-    
-    read -p "No-IP Username/Email: " username
-    read -s -p "No-IP Password: " password
-    echo ""
-    read -p "Hostname (e.g., yourname.ddns.net): " hostname
-    read -p "Update interval in minutes [30]: " interval
-    interval=${interval:-30}
-    read -p "Enable auto-update? (yes/no) [yes]: " auto_update
-    auto_update=${auto_update:-yes}
-    
-    save_noip_setting "noip_enabled" "true"
-    save_noip_setting "noip_username" "${username}"
-    save_noip_setting "noip_password" "${password}"
-    save_noip_setting "noip_hostname" "${hostname}"
-    save_noip_setting "noip_update_interval" "${interval}"
-    save_noip_setting "noip_auto_update_enabled" "$([ "${auto_update}" = "yes" ] && echo "true" || echo "false")"
-    
-    echo ""
-    echo -e "${GREEN}✓ No-IP configured successfully!${NC}"
-    echo "Running initial update..."
-    update_noip
-    
-    # Setup cron job if auto-update enabled
-    if [ "${auto_update}" = "yes" ]; then
-        setup_cron "${interval}"
+    # Show additional hostnames
+    export PGPASSWORD="${DB_PASSWORD}"
+    local extra=$(psql -h localhost -U ${DB_USER} -d ${DB_NAME} -t -c "
+        SELECT setting_key, setting_value FROM server_settings 
+        WHERE setting_key LIKE 'ddns_hostname_%' ORDER BY setting_key;
+    " 2>/dev/null)
+
+    if [ -n "$(echo "${extra}" | tr -d ' \n')" ]; then
+        echo "Additional Hostnames:"
+        echo "${extra}" | while IFS='|' read -r key value; do
+            value=$(echo "${value}" | tr -d ' ')
+            [ -n "${value}" ] && echo "  - ${value}"
+        done
+        echo ""
     fi
 }
 
-# Setup cron job
-setup_cron() {
-    local interval=$1
-    
-    # Remove existing cron
-    crontab -l 2>/dev/null | grep -v "noip-update.sh" | crontab -
-    
-    # Add new cron
-    (crontab -l 2>/dev/null; echo "*/${interval} * * * * ${INSTALL_DIR}/noip-update.sh update >> /var/log/noip-update.log 2>&1") | crontab -
-    
-    echo -e "${GREEN}✓ Auto-update cron job configured (every ${interval} minutes)${NC}"
+# ─── Configure ──────────────────────────────────────────────────
+configure() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Dynamic DNS Configuration                       ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Select DDNS Provider:"
+    echo "  1) No-IP"
+    echo "  2) DuckDNS"
+    echo "  3) Dynu"
+    echo "  4) FreeDNS"
+    echo "  5) Cloudflare"
+    echo "  6) Custom URL"
+    echo ""
+    read -p "Provider [1]: " provider_choice
+    provider_choice=${provider_choice:-1}
+
+    local provider=""
+    case ${provider_choice} in
+        1) provider="noip" ;;
+        2) provider="duckdns" ;;
+        3) provider="dynu" ;;
+        4) provider="freedns" ;;
+        5) provider="cloudflare" ;;
+        6) provider="custom" ;;
+        *) echo "Invalid choice"; return 1 ;;
+    esac
+
+    save_setting "ddns_provider" "${provider}"
+
+    case "${provider}" in
+        noip)
+            read -p "No-IP Username/Email: " username
+            read -s -p "No-IP Password: " password
+            echo ""
+            read -p "Hostname (e.g., yourname.ddns.net): " hostname
+            save_setting "noip_username" "${username}"
+            save_setting "noip_password" "${password}"
+            save_setting "noip_hostname" "${hostname}"
+            ;;
+        duckdns)
+            read -p "DuckDNS Token: " token
+            read -p "Hostname (e.g., yourname.duckdns.org): " hostname
+            save_setting "ddns_duckdns_token" "${token}"
+            save_setting "noip_hostname" "${hostname}"
+            ;;
+        dynu)
+            read -p "Dynu Username: " username
+            read -s -p "Dynu Password: " password
+            echo ""
+            read -p "Hostname (e.g., yourname.dynu.net): " hostname
+            save_setting "ddns_dynu_username" "${username}"
+            save_setting "ddns_dynu_password" "${password}"
+            save_setting "noip_hostname" "${hostname}"
+            ;;
+        freedns)
+            read -p "FreeDNS Update Key: " update_key
+            read -p "Hostname: " hostname
+            save_setting "ddns_freedns_update_key" "${update_key}"
+            save_setting "noip_hostname" "${hostname}"
+            ;;
+        cloudflare)
+            read -p "Cloudflare API Token: " api_token
+            read -p "Zone ID: " zone_id
+            read -p "Hostname (e.g., vpn.example.com): " hostname
+            save_setting "ddns_cloudflare_api_token" "${api_token}"
+            save_setting "ddns_cloudflare_zone_id" "${zone_id}"
+            save_setting "noip_hostname" "${hostname}"
+            ;;
+        custom)
+            read -p "Update URL (use {ip} placeholder): " update_url
+            read -p "Hostname (for display): " hostname
+            save_setting "ddns_custom_update_url" "${update_url}"
+            save_setting "noip_hostname" "${hostname}"
+            ;;
+    esac
+
+    save_setting "noip_enabled" "true"
+
+    read -p "Update interval in minutes [30]: " interval
+    interval=${interval:-30}
+    save_setting "ddns_cron_interval" "${interval}"
+
+    read -p "Failure alert threshold [3]: " threshold
+    threshold=${threshold:-3}
+    save_setting "ddns_failure_alert_threshold" "${threshold}"
+
+    echo ""
+    echo -e "${GREEN}✓ DDNS configured with provider: ${provider}${NC}"
+    echo "Running initial update..."
+    do_update
+
+    setup_cron "${interval}"
 }
 
-# Disable cron
-disable_cron() {
-    crontab -l 2>/dev/null | grep -v "noip-update.sh" | crontab -
-    echo "Auto-update disabled"
-}
-
+# ─── CLI Entry Point ───────────────────────────────────────────
 case "$1" in
     update)
-        update_noip
+        do_update
+        ;;
+    update-all)
+        update_all_hostnames
         ;;
     status)
         check_status
@@ -988,33 +1347,48 @@ case "$1" in
         configure
         ;;
     enable)
-        save_noip_setting "noip_enabled" "true"
-        echo "No-IP enabled"
+        save_setting "noip_enabled" "true"
+        echo "DDNS enabled"
         ;;
     disable)
-        save_noip_setting "noip_enabled" "false"
+        save_setting "noip_enabled" "false"
         disable_cron
-        echo "No-IP disabled"
+        echo "DDNS disabled"
         ;;
     cron)
-        interval=${2:-30}
+        interval=${2:-}
         setup_cron "${interval}"
         ;;
+    sync-cron)
+        sync_cron
+        ;;
     *)
-        echo "Usage: $0 {update|status|configure|enable|disable|cron [interval]}"
+        echo ""
+        echo "WireGuard Dynamic DNS Tool"
+        echo "=========================="
+        echo ""
+        echo "Usage: wg-ddns <command>"
+        echo ""
+        echo "Supported Providers: No-IP, DuckDNS, Dynu, FreeDNS, Cloudflare, Custom"
         echo ""
         echo "Commands:"
-        echo "  update      Update No-IP DNS record with current IP"
-        echo "  status      Show No-IP configuration status"
-        echo "  configure   Interactive setup wizard"
-        echo "  enable      Enable No-IP updates"
-        echo "  disable     Disable No-IP updates"
-        echo "  cron [min]  Setup auto-update cron job (default: 30 min)"
+        echo "  update          Update primary DDNS hostname"
+        echo "  update-all      Update all configured hostnames"
+        echo "  status          Show DDNS status and configuration"
+        echo "  configure       Interactive multi-provider setup wizard"
+        echo "  enable          Enable DDNS updates"
+        echo "  disable         Disable DDNS updates and cron"
+        echo "  cron [min]      Setup cron job (reads DB interval if omitted)"
+        echo "  sync-cron       Sync local cron with database interval"
+        echo ""
         ;;
 esac
-NOIPEOF
+DDNSEOF
     
-    chmod +x ${INSTALL_DIR}/noip-update.sh
+    chmod +x ${INSTALL_DIR}/ddns-update.sh
+    
+    # Keep backward-compatible symlink
+    ln -sf ${INSTALL_DIR}/ddns-update.sh ${INSTALL_DIR}/noip-update.sh
     
     # Create subdomain management script
     cat > ${INSTALL_DIR}/subdomain.sh <<'SUBDOMAINEOF'
@@ -1519,7 +1893,8 @@ create_cli_wrapper() {
     ln -sf ${INSTALL_DIR}/restore.sh /usr/local/bin/wg-restore
     ln -sf ${INSTALL_DIR}/sync.sh /usr/local/bin/wg-sync
     ln -sf ${INSTALL_DIR}/update.sh /usr/local/bin/wg-update
-    ln -sf ${INSTALL_DIR}/noip-update.sh /usr/local/bin/wg-noip
+    ln -sf ${INSTALL_DIR}/ddns-update.sh /usr/local/bin/wg-ddns
+    ln -sf ${INSTALL_DIR}/ddns-update.sh /usr/local/bin/wg-noip  # backward compat
     ln -sf ${INSTALL_DIR}/subdomain.sh /usr/local/bin/wg-subdomain
     ln -sf ${INSTALL_DIR}/dns-validate.sh /usr/local/bin/wg-dns
     ln -sf ${INSTALL_DIR}/email-notify.sh /usr/local/bin/wg-email
@@ -2538,7 +2913,7 @@ print_summary() {
     echo "  ├─ wg-manager status          - Show server status"
     echo "  ├─ wg-manager peer add NAME   - Add new peer"
     echo "  ├─ wg-manager peer list       - List all peers"
-    echo "  ├─ wg-noip configure          - Setup No-IP DNS updates"
+    echo "  ├─ wg-ddns configure          - Setup multi-provider DDNS"
     echo "  ├─ wg-subdomain configure     - Setup node subdomains"
     echo "  ├─ wg-dns validate-all        - Validate all DNS records"
     echo "  ├─ wg-dns wildcard            - Check wildcard DNS"
@@ -3478,7 +3853,7 @@ setup_frontend() {
             <p style="margin-top: 15px;"><strong>Or use CLI:</strong></p>
             <code>wg-manager status</code>
             <code>wg-manager peer add &lt;name&gt;</code>
-            <code>wg-noip configure</code>
+            <code>wg-ddns configure</code>
             <code>wg-subdomain configure</code>
         </div>
     </div>
@@ -3523,9 +3898,9 @@ main() {
     fi
     
     echo ""
-    read -p "Would you like to configure No-IP DNS? (yes/no): " setup_noip
-    if [ "$setup_noip" = "yes" ]; then
-        /usr/local/bin/wg-noip configure
+    read -p "Would you like to configure Dynamic DNS? (yes/no): " setup_ddns
+    if [ "$setup_ddns" = "yes" ]; then
+        /usr/local/bin/wg-ddns configure
     fi
     
     echo ""
