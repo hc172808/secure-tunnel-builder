@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, RefreshCw, Globe, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Globe, CheckCircle, XCircle, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,18 +14,67 @@ interface HostnameEntry {
   id: string;
   hostname: string;
   provider: string;
+  credentials?: Record<string, string>;
   lastUpdate: string | null;
   lastIP: string | null;
   lastStatus: "success" | "failed" | "pending" | null;
 }
 
-const PROVIDER_OPTIONS = [
-  { id: "noip", name: "No-IP" },
-  { id: "duckdns", name: "DuckDNS" },
-  { id: "dynu", name: "Dynu" },
-  { id: "freedns", name: "FreeDNS" },
-  { id: "cloudflare", name: "Cloudflare" },
-  { id: "custom", name: "Custom" },
+interface ProviderField {
+  key: string;
+  label: string;
+  placeholder: string;
+  secret?: boolean;
+  required?: boolean;
+  helpText?: string;
+}
+
+const PROVIDER_OPTIONS: { id: string; name: string; fields: ProviderField[] }[] = [
+  {
+    id: "noip",
+    name: "No-IP",
+    fields: [
+      { key: "username", label: "Username", placeholder: "your@email.com", required: true },
+      { key: "password", label: "Password", placeholder: "••••••••", secret: true, required: true },
+    ],
+  },
+  {
+    id: "duckdns",
+    name: "DuckDNS",
+    fields: [
+      { key: "token", label: "Token", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", secret: true, required: true, helpText: "Found at duckdns.org after login" },
+    ],
+  },
+  {
+    id: "dynu",
+    name: "Dynu",
+    fields: [
+      { key: "username", label: "Username", placeholder: "your@email.com", required: true },
+      { key: "password", label: "Password / IP Update Password", placeholder: "••••••••", secret: true, required: true },
+    ],
+  },
+  {
+    id: "freedns",
+    name: "FreeDNS",
+    fields: [
+      { key: "update_key", label: "Update Key", placeholder: "alphanumeric update key", secret: true, required: true, helpText: "Found in FreeDNS direct URL" },
+    ],
+  },
+  {
+    id: "cloudflare",
+    name: "Cloudflare",
+    fields: [
+      { key: "api_token", label: "API Token", placeholder: "CF API token with DNS edit permissions", secret: true, required: true },
+      { key: "zone_id", label: "Zone ID", placeholder: "32-char hex zone ID", required: true, helpText: "Found on domain overview page in Cloudflare dashboard" },
+    ],
+  },
+  {
+    id: "custom",
+    name: "Custom",
+    fields: [
+      { key: "update_url", label: "Update URL", placeholder: "https://provider.com/update?ip={ip}&host=...", required: true, helpText: "Use {ip} as placeholder for current IP" },
+    ],
+  },
 ];
 
 export function DDNSMultiHostname() {
@@ -36,6 +85,10 @@ export function DDNSMultiHostname() {
   const [updatingAll, setUpdatingAll] = useState(false);
   const [newHostname, setNewHostname] = useState("");
   const [newProvider, setNewProvider] = useState("noip");
+  const [newCredentials, setNewCredentials] = useState<Record<string, string>>({});
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+
+  const selectedProviderConfig = PROVIDER_OPTIONS.find((p) => p.id === newProvider);
 
   const fetchHostnames = useCallback(async () => {
     try {
@@ -65,6 +118,12 @@ export function DDNSMultiHostname() {
     fetchHostnames();
   }, [fetchHostnames]);
 
+  // Reset credentials when provider changes
+  useEffect(() => {
+    setNewCredentials({});
+    setShowSecrets({});
+  }, [newProvider]);
+
   const saveHostnames = useCallback(
     async (entries: HostnameEntry[]) => {
       const value = JSON.stringify(entries);
@@ -91,6 +150,17 @@ export function DDNSMultiHostname() {
     [user?.id]
   );
 
+  const validateCredentials = (): boolean => {
+    if (!selectedProviderConfig) return true;
+    for (const field of selectedProviderConfig.fields) {
+      if (field.required && !newCredentials[field.key]?.trim()) {
+        toast.error(`${field.label} is required for ${selectedProviderConfig.name}`);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const addHostname = async () => {
     if (!newHostname.trim()) {
       toast.error("Please enter a hostname");
@@ -100,11 +170,13 @@ export function DDNSMultiHostname() {
       toast.error("Hostname already exists");
       return;
     }
+    if (!validateCredentials()) return;
 
     const entry: HostnameEntry = {
       id: crypto.randomUUID(),
       hostname: newHostname.trim(),
       provider: newProvider,
+      credentials: { ...newCredentials },
       lastUpdate: null,
       lastIP: null,
       lastStatus: null,
@@ -114,6 +186,7 @@ export function DDNSMultiHostname() {
     setHostnames(updated);
     await saveHostnames(updated);
     setNewHostname("");
+    setNewCredentials({});
     toast.success(`Added ${entry.hostname}`);
   };
 
@@ -141,6 +214,7 @@ export function DDNSMultiHostname() {
           body: JSON.stringify({
             provider: entry.provider,
             hostname: entry.hostname,
+            credentials: entry.credentials,
           }),
         }
       );
@@ -203,6 +277,15 @@ export function DDNSMultiHostname() {
     }
   };
 
+  const toggleSecret = (key: string) => {
+    setShowSecrets((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const maskValue = (value: string) => {
+    if (value.length <= 6) return "••••••";
+    return value.slice(0, 3) + "•••" + value.slice(-3);
+  };
+
   if (loading) {
     return (
       <Card>
@@ -222,7 +305,7 @@ export function DDNSMultiHostname() {
             <div>
               <CardTitle className="text-base">Multiple Hostnames</CardTitle>
               <CardDescription>
-                Manage additional hostnames to update simultaneously
+                Manage additional hostnames with provider-specific credentials
               </CardDescription>
             </div>
           </div>
@@ -245,33 +328,86 @@ export function DDNSMultiHostname() {
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Add new hostname */}
-        <div className="flex items-end gap-2">
-          <div className="flex-1 space-y-1">
-            <Label className="text-xs">Hostname</Label>
-            <Input
-              placeholder="yourname.ddns.net"
-              value={newHostname}
-              onChange={(e) => setNewHostname(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addHostname()}
-            />
+        <div className="space-y-3 rounded-lg border border-border p-3">
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs">Hostname</Label>
+              <Input
+                placeholder={
+                  newProvider === "duckdns"
+                    ? "yourname.duckdns.org"
+                    : newProvider === "cloudflare"
+                    ? "vpn.yourdomain.com"
+                    : "yourname.ddns.net"
+                }
+                value={newHostname}
+                onChange={(e) => setNewHostname(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addHostname()}
+              />
+            </div>
+            <div className="w-[140px] space-y-1">
+              <Label className="text-xs">Provider</Label>
+              <Select value={newProvider} onValueChange={setNewProvider}>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVIDER_OPTIONS.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <div className="w-[140px] space-y-1">
-            <Label className="text-xs">Provider</Label>
-            <Select value={newProvider} onValueChange={setNewProvider}>
-              <SelectTrigger className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PROVIDER_OPTIONS.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button size="icon" className="h-9 w-9" onClick={addHostname}>
-            <Plus className="h-4 w-4" />
+
+          {/* Provider-specific credential fields */}
+          {selectedProviderConfig && selectedProviderConfig.fields.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+              {selectedProviderConfig.fields.map((field) => (
+                <div key={field.key} className="space-y-1">
+                  <Label className="text-xs">
+                    {field.label}
+                    {field.required && <span className="text-destructive ml-0.5">*</span>}
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      type={field.secret && !showSecrets[field.key] ? "password" : "text"}
+                      placeholder={field.placeholder}
+                      value={newCredentials[field.key] || ""}
+                      onChange={(e) =>
+                        setNewCredentials((prev) => ({ ...prev, [field.key]: e.target.value }))
+                      }
+                      className="pr-8"
+                    />
+                    {field.secret && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full w-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => toggleSecret(field.key)}
+                      >
+                        {showSecrets[field.key] ? (
+                          <EyeOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Eye className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                  {field.helpText && (
+                    <p className="text-[10px] text-muted-foreground">{field.helpText}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button size="sm" className="w-full" onClick={addHostname}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Hostname
           </Button>
         </div>
 
@@ -282,57 +418,74 @@ export function DDNSMultiHostname() {
           </div>
         ) : (
           <div className="space-y-2">
-            {hostnames.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-center gap-3 p-3 rounded-lg border border-border"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium font-mono truncate">
-                      {entry.hostname}
-                    </span>
-                    <Badge variant="outline" className="text-xs capitalize">
-                      {PROVIDER_OPTIONS.find((p) => p.id === entry.provider)?.name || entry.provider}
-                    </Badge>
-                    {entry.lastStatus === "success" && (
-                      <CheckCircle className="h-3.5 w-3.5 text-success flex-shrink-0" />
+            {hostnames.map((entry) => {
+              const providerConfig = PROVIDER_OPTIONS.find((p) => p.id === entry.provider);
+              return (
+                <div
+                  key={entry.id}
+                  className="flex items-center gap-3 p-3 rounded-lg border border-border"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium font-mono truncate">
+                        {entry.hostname}
+                      </span>
+                      <Badge variant="outline" className="text-xs capitalize">
+                        {providerConfig?.name || entry.provider}
+                      </Badge>
+                      {entry.credentials && Object.keys(entry.credentials).length > 0 && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {Object.keys(entry.credentials).length} credential{Object.keys(entry.credentials).length > 1 ? "s" : ""}
+                        </Badge>
+                      )}
+                      {entry.lastStatus === "success" && (
+                        <CheckCircle className="h-3.5 w-3.5 text-success flex-shrink-0" />
+                      )}
+                      {entry.lastStatus === "failed" && (
+                        <XCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
+                      )}
+                      {entry.lastStatus === null && (
+                        <AlertCircle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                      )}
+                    </div>
+                    {entry.lastUpdate && (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Last: {new Date(entry.lastUpdate).toLocaleString()}
+                        {entry.lastIP && <span className="font-mono ml-2">{entry.lastIP}</span>}
+                      </div>
                     )}
-                    {entry.lastStatus === "failed" && (
-                      <XCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
-                    )}
-                    {entry.lastStatus === null && (
-                      <AlertCircle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                    {entry.credentials && Object.keys(entry.credentials).length > 0 && (
+                      <div className="flex gap-2 mt-1 flex-wrap">
+                        {Object.entries(entry.credentials).map(([key, val]) => (
+                          <span key={key} className="text-[10px] text-muted-foreground">
+                            {key}: <span className="font-mono">{maskValue(val)}</span>
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </div>
-                  {entry.lastUpdate && (
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      Last: {new Date(entry.lastUpdate).toLocaleString()}
-                      {entry.lastIP && <span className="font-mono ml-2">{entry.lastIP}</span>}
-                    </div>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => updateSingleHostname(entry)}
+                    disabled={updating === entry.id}
+                  >
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 ${updating === entry.id ? "animate-spin" : ""}`}
+                    />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive"
+                    onClick={() => removeHostname(entry.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => updateSingleHostname(entry)}
-                  disabled={updating === entry.id}
-                >
-                  <RefreshCw
-                    className={`h-3.5 w-3.5 ${updating === entry.id ? "animate-spin" : ""}`}
-                  />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive"
-                  onClick={() => removeHostname(entry.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>
