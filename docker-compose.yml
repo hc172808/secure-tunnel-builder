@@ -1,0 +1,97 @@
+# ──────────────────────────────────────────────────────────────
+# WireGuard Manager — Docker Compose
+# Full-stack: WireGuard VPN + PostgreSQL + Node API + Frontend
+# ──────────────────────────────────────────────────────────────
+#
+# Quick start:
+#   1. Copy .env.docker.example → .env.docker and fill in values
+#   2. docker compose up -d --build
+#   3. Open http://YOUR_SERVER_IP in browser
+#   4. Default admin: admin@wireguard.local / changeme123
+#
+# ──────────────────────────────────────────────────────────────
+
+services:
+  wireguard-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+        VITE_SUPABASE_PROJECT_ID: ${VITE_SUPABASE_PROJECT_ID}
+    container_name: wireguard-manager
+    restart: unless-stopped
+
+    # Required for WireGuard kernel module
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "51820:51820/udp"
+
+    volumes:
+      # Persist WireGuard configs across restarts
+      - wg-config:/etc/wireguard
+      # Persist PostgreSQL data
+      - pg-data:/var/lib/postgresql
+      # Persist backups
+      - wg-backups:/var/backups/wireguard
+
+    environment:
+      # ── Database ───────────────────────────────────────────
+      DB_NAME: ${DB_NAME:-wireguard_manager}
+      DB_USER: ${DB_USER:-wgadmin}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.docker}
+
+      # ── Admin Account (created on first run) ──────────────
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@wireguard.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
+
+      # ── WireGuard ──────────────────────────────────────────
+      WG_SERVER_IP: ${WG_SERVER_IP:-10.0.0.1}
+      WG_NETWORK: ${WG_NETWORK:-10.0.0.0/24}
+      WG_PORT: ${WG_PORT:-51820}
+      WG_ENDPOINT: ${WG_ENDPOINT:-auto}
+      WG_DNS: ${WG_DNS:-1.1.1.1}
+
+      # ── Supabase / Lovable Cloud (optional) ────────────────
+      VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+
+      # ── SSL (optional) ────────────────────────────────────
+      DOMAIN: ${DOMAIN:-}
+      ENABLE_SSL: ${ENABLE_SSL:-false}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
+
+      # ── DDNS (optional) ───────────────────────────────────
+      DDNS_PROVIDER: ${DDNS_PROVIDER:-}
+      DDNS_HOSTNAME: ${DDNS_HOSTNAME:-}
+      DDNS_USERNAME: ${DDNS_USERNAME:-}
+      DDNS_PASSWORD: ${DDNS_PASSWORD:-}
+      DDNS_TOKEN: ${DDNS_TOKEN:-}
+      DDNS_INTERVAL: ${DDNS_INTERVAL:-30}
+
+    env_file:
+      - .env.docker
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  wg-config:
+    name: wireguard-config
+  pg-data:
+    name: wireguard-pgdata
+  wg-backups:
+    name: wireguard-backups
