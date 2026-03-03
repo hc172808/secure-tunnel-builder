@@ -78,6 +78,7 @@ RUN chmod +x /opt/wireguard-manager/*.sh 2>/dev/null || true
 
 # ── Step 6: Nginx configuration ─────────────────────────────
 COPY docker/nginx/default.conf /etc/nginx/sites-available/default
+COPY docker/nginx/ssl.conf /etc/nginx/sites-available/ssl.conf
 
 # ── Step 7: Supervisor config (process manager) ──────────────
 COPY docker/supervisor/ /etc/supervisor/conf.d/
