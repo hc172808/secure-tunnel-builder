@@ -112,6 +112,92 @@ app.post("/internal/email-notify", async (req, res) => {
   }
 });
 
+// ── Docker stats endpoint ───────────────────────────────────
+app.get("/docker/stats", async (req, res) => {
+  try {
+    const os = require("os");
+    const fs = require("fs");
+
+    // Container uptime from /proc/uptime
+    let uptimeStr = "Unknown";
+    try {
+      const uptimeSec = parseFloat(fs.readFileSync("/proc/uptime", "utf8").split(" ")[0]);
+      const d = Math.floor(uptimeSec / 86400);
+      const h = Math.floor((uptimeSec % 86400) / 3600);
+      const m = Math.floor((uptimeSec % 3600) / 60);
+      uptimeStr = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+    } catch {}
+
+    // CPU usage from /proc/stat
+    let cpuPercent = 0;
+    try {
+      const loadAvg = os.loadavg()[0];
+      cpuPercent = Math.min((loadAvg / os.cpus().length) * 100, 100);
+    } catch {}
+
+    // Memory
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const memPercent = (usedMem / totalMem) * 100;
+
+    // Disk usage
+    let diskUsed = 0, diskTotal = 0, diskPercent = 0;
+    try {
+      const dfOutput = execSync("df / --output=used,size -B1 | tail -1").toString().trim();
+      const [used, total] = dfOutput.split(/\s+/).map(Number);
+      diskUsed = used;
+      diskTotal = total;
+      diskPercent = (used / total) * 100;
+    } catch {}
+
+    // Network I/O from /proc/net/dev
+    let netRx = 0, netTx = 0;
+    try {
+      const netData = fs.readFileSync("/proc/net/dev", "utf8");
+      for (const line of netData.split("\n")) {
+        if (line.includes("eth0") || line.includes("wg0")) {
+          const parts = line.trim().split(/\s+/);
+          netRx += parseInt(parts[1]) || 0;
+          netTx += parseInt(parts[9]) || 0;
+        }
+      }
+    } catch {}
+
+    // WireGuard health
+    let healthCheck = "healthy";
+    try {
+      await pool.query("SELECT 1");
+      execSync("wg show wg0 2>/dev/null");
+    } catch {
+      healthCheck = "unhealthy";
+    }
+
+    // Restart count (from supervisor)
+    let restarts = 0;
+    try {
+      const supervisorOut = execSync("supervisorctl status 2>/dev/null || true").toString();
+      const matches = supervisorOut.match(/STARTING/g);
+      restarts = matches ? matches.length : 0;
+    } catch {}
+
+    res.json({
+      name: "wireguard-manager",
+      status: "running",
+      uptime: uptimeStr,
+      cpu: parseFloat(cpuPercent.toFixed(1)),
+      memory: { used: usedMem, total: totalMem, percent: parseFloat(memPercent.toFixed(1)) },
+      disk: { used: diskUsed, total: diskTotal, percent: parseFloat(diskPercent.toFixed(1)) },
+      network: { rx: netRx, tx: netTx },
+      restarts,
+      image: "wireguard-manager:latest",
+      healthCheck,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {

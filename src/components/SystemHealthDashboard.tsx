@@ -18,6 +18,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { DDNSStatusWidget } from "@/components/DDNSStatusWidget";
+import { DockerHealthPanel } from "@/components/DockerHealthPanel";
 
 interface HealthMetrics {
   database: {
@@ -331,6 +332,9 @@ export function SystemHealthDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Docker Container Health */}
+      <DockerHealthPanel />
 
       {/* DDNS Status Widget */}
       <DDNSStatusWidget />

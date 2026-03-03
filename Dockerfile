@@ -49,6 +49,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     net-tools \
     procps \
     qrencode \
+    certbot \
+    python3-certbot-nginx \
     && rm -rf /var/lib/apt/lists/*
 
 # Ensure Node.js 20 (if default repo is older)
@@ -58,6 +60,7 @@ RUN npm install -g n && n 20 && npm install -g pm2
 RUN mkdir -p \
     /opt/wireguard-manager/api \
     /var/www/wireguard-dashboard \
+    /var/www/certbot \
     /var/backups/wireguard \
     /etc/wireguard \
     /var/log/wireguard-manager
@@ -76,6 +79,7 @@ RUN chmod +x /opt/wireguard-manager/*.sh 2>/dev/null || true
 
 # ── Step 6: Nginx configuration ─────────────────────────────
 COPY docker/nginx/default.conf /etc/nginx/sites-available/default
+COPY docker/nginx/ssl.conf /etc/nginx/sites-available/ssl.conf
 
 # ── Step 7: Supervisor config (process manager) ──────────────
 COPY docker/supervisor/ /etc/supervisor/conf.d/
