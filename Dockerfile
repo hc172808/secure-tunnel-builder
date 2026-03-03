@@ -49,6 +49,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     net-tools \
     procps \
     qrencode \
+    certbot \
+    python3-certbot-nginx \
     && rm -rf /var/lib/apt/lists/*
 
 # Ensure Node.js 20 (if default repo is older)
