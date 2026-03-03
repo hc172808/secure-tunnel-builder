@@ -60,6 +60,7 @@ RUN npm install -g n && n 20 && npm install -g pm2
 RUN mkdir -p \
     /opt/wireguard-manager/api \
     /var/www/wireguard-dashboard \
+    /var/www/certbot \
     /var/backups/wireguard \
     /etc/wireguard \
     /var/log/wireguard-manager

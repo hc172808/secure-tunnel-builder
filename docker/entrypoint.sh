@@ -209,6 +209,16 @@ if [ -n "${DDNS_PROVIDER}" ] && [ -n "${DDNS_HOSTNAME}" ]; then
     log "DDNS cron set to every ${DDNS_INTERVAL} minutes"
 fi
 
-# ── Step 5: Start services via supervisor ────────────────────
+# ── Step 5: SSL/TLS Setup ────────────────────────────────────
+if [ "${ENABLE_SSL}" = "true" ] && [ -n "${DOMAIN}" ]; then
+    log "Setting up SSL/TLS for ${DOMAIN}..."
+    # Start nginx temporarily for ACME challenge
+    nginx 2>/dev/null || true
+    sleep 2
+    bash /opt/wireguard-manager/ssl-setup.sh || warn "SSL setup failed, continuing with HTTP"
+    nginx -s stop 2>/dev/null || true
+fi
+
+# ── Step 6: Start services via supervisor ────────────────────
 log "Starting services..."
 exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf
