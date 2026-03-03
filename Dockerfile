@@ -73,7 +73,8 @@ COPY docker/api/ /opt/wireguard-manager/api/
 WORKDIR /opt/wireguard-manager/api
 RUN npm install --production 2>/dev/null || true
 
-# ── Step 5: Copy scripts & configs ───────────────────────────
+# ── Step 5: Copy SQL init file & scripts ─────────────────────
+COPY docker/db/ /opt/wireguard-manager/db/
 COPY docker/scripts/ /opt/wireguard-manager/
 RUN chmod +x /opt/wireguard-manager/*.sh 2>/dev/null || true
 
