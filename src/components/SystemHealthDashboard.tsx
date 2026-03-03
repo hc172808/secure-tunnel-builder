@@ -333,6 +333,9 @@ export function SystemHealthDashboard() {
         </Card>
       </div>
 
+      {/* Docker Container Health */}
+      <DockerHealthPanel />
+
       {/* DDNS Status Widget */}
       <DDNSStatusWidget />
 
