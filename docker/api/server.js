@@ -265,6 +265,129 @@ app.get("/services/health", async (req, res) => {
   res.json({ overall: allHealthy ? "healthy" : "degraded", services });
 });
 
+// ── Database backup (pg_dump) ────────────────────────────────
+app.post("/database/backup", (req, res) => {
+  try {
+    const dbName = process.env.DB_NAME || "wireguard_manager";
+    const dbUser = process.env.DB_USER || "wgadmin";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `backup-${timestamp}.sql`;
+    const backupPath = `/tmp/${filename}`;
+
+    execSync(
+      `PGPASSWORD="${process.env.DB_PASSWORD || ""}" pg_dump -U ${dbUser} -d ${dbName} --no-owner --no-acl -f ${backupPath}`,
+      { timeout: 30000 }
+    );
+
+    const fs = require("fs");
+    const sql = fs.readFileSync(backupPath, "utf8");
+    fs.unlinkSync(backupPath);
+
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Type", "application/sql");
+    res.send(sql);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Database restore (pg_restore / psql) ────────────────────
+app.post("/database/restore", express.text({ type: "*/*", limit: "50mb" }), (req, res) => {
+  try {
+    const dbName = process.env.DB_NAME || "wireguard_manager";
+    const dbUser = process.env.DB_USER || "wgadmin";
+    const fs = require("fs");
+    const restorePath = `/tmp/restore-${Date.now()}.sql`;
+
+    fs.writeFileSync(restorePath, req.body);
+    execSync(
+      `PGPASSWORD="${process.env.DB_PASSWORD || ""}" psql -U ${dbUser} -d ${dbName} -f ${restorePath}`,
+      { timeout: 60000 }
+    );
+    fs.unlinkSync(restorePath);
+
+    res.json({ success: true, message: "Database restored successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Database info ───────────────────────────────────────────
+app.get("/database/info", async (req, res) => {
+  try {
+    const sizeResult = await pool.query(
+      `SELECT pg_database_size(current_database()) as size`
+    );
+    const tableResult = await pool.query(
+      `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`
+    );
+    const countQueries = await Promise.all(
+      tableResult.rows.map(async (t) => {
+        const { rows } = await pool.query(`SELECT count(*) as c FROM "${t.tablename}"`);
+        return { table: t.tablename, rows: parseInt(rows[0].c) };
+      })
+    );
+
+    res.json({
+      database: process.env.DB_NAME || "wireguard_manager",
+      size: parseInt(sizeResult.rows[0].size),
+      tables: countQueries,
+      version: (await pool.query("SELECT version()")).rows[0].version,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Container logs viewer ───────────────────────────────────
+app.get("/logs/:service", (req, res) => {
+  const { service } = req.params;
+  const lines = parseInt(req.query.lines) || 100;
+
+  const logPaths = {
+    wireguard: "/var/log/wireguard.log",
+    api: "/var/log/wireguard-api.log",
+    nginx: "/var/log/nginx/access.log",
+    "nginx-error": "/var/log/nginx/error.log",
+    postgresql: "/var/log/postgresql/postgresql-*.log",
+    supervisor: "/var/log/supervisor/supervisord.log",
+  };
+
+  if (!logPaths[service]) {
+    return res.status(400).json({ error: `Unknown service: ${service}. Available: ${Object.keys(logPaths).join(", ")}` });
+  }
+
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    let logPath = logPaths[service];
+
+    // Handle glob patterns (e.g., postgresql)
+    if (logPath.includes("*")) {
+      const glob = require("child_process");
+      const resolved = execSync(`ls -t ${logPath} 2>/dev/null | head -1`).toString().trim();
+      if (!resolved) throw new Error("No log file found");
+      logPath = resolved;
+    }
+
+    if (!fs.existsSync(logPath)) {
+      // Try journalctl as fallback
+      try {
+        const unit = service === "wireguard" ? "wg-quick@wg0" : service;
+        const output = execSync(`journalctl -u ${unit} --no-pager -n ${lines} 2>/dev/null || echo "No logs available"`).toString();
+        return res.json({ service, source: "journalctl", lines: output.split("\n").filter(Boolean) });
+      } catch {
+        return res.json({ service, source: "none", lines: [`No logs found for ${service}`] });
+      }
+    }
+
+    const output = execSync(`tail -n ${lines} "${logPath}"`).toString();
+    res.json({ service, source: logPath, lines: output.split("\n").filter(Boolean) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {
