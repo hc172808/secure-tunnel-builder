@@ -32,6 +32,7 @@ import {
 import { toast } from "sonner";
 import { api, BackupData } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
+import { AdminDatabaseBackupRestore } from "@/components/admin/AdminDatabaseBackupRestore";
 
 export function AdminDatabaseControls() {
   const [cloudEnabled, setCloudEnabled] = useState(true);
@@ -128,6 +129,9 @@ export function AdminDatabaseControls() {
 
   return (
     <div className="space-y-6">
+      {/* PostgreSQL Backup & Restore (pg_dump/psql) */}
+      <AdminDatabaseBackupRestore />
+
       {/* Database Status */}
       <Card className="gradient-border">
         <CardHeader>
