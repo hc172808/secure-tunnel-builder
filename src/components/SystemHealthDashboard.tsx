@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { DDNSStatusWidget } from "@/components/DDNSStatusWidget";
 import { DockerHealthPanel } from "@/components/DockerHealthPanel";
+import { ServiceHealthPanel } from "@/components/ServiceHealthPanel";
 
 interface HealthMetrics {
   database: {
