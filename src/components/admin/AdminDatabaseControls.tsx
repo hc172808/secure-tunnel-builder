@@ -129,6 +129,9 @@ export function AdminDatabaseControls() {
 
   return (
     <div className="space-y-6">
+      {/* PostgreSQL Backup & Restore (pg_dump/psql) */}
+      <AdminDatabaseBackupRestore />
+
       {/* Database Status */}
       <Card className="gradient-border">
         <CardHeader>

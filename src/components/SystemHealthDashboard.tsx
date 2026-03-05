@@ -344,6 +344,9 @@ export function SystemHealthDashboard() {
       {/* DDNS Status Widget */}
       <DDNSStatusWidget />
 
+      {/* Container Logs */}
+      <ContainerLogsViewer />
+
       {/* Local Server Status */}
       <Card className="gradient-border">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
