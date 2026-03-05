@@ -198,6 +198,73 @@ app.get("/docker/stats", async (req, res) => {
   }
 });
 
+// ── Service health check (all internal services) ────────────
+app.get("/services/health", async (req, res) => {
+  const services = {};
+
+  // PostgreSQL
+  try {
+    const dbStart = Date.now();
+    await pool.query("SELECT 1");
+    services.postgresql = {
+      status: "running",
+      latency: Date.now() - dbStart,
+      message: "Database responding",
+    };
+  } catch (err) {
+    services.postgresql = { status: "down", latency: 0, message: err.message };
+  }
+
+  // Nginx
+  try {
+    const http = require("http");
+    const ngxStart = Date.now();
+    await new Promise((resolve, reject) => {
+      const r = http.get("http://127.0.0.1:80/", (resp) => {
+        resp.resume();
+        resolve();
+      });
+      r.on("error", reject);
+      r.setTimeout(3000, () => { r.destroy(); reject(new Error("timeout")); });
+    });
+    services.nginx = { status: "running", latency: Date.now() - ngxStart, message: "Reverse proxy responding" };
+  } catch {
+    // Check process instead
+    try {
+      execSync("pgrep nginx", { timeout: 2000 });
+      services.nginx = { status: "running", latency: 0, message: "Process running (port check failed)" };
+    } catch {
+      services.nginx = { status: "down", latency: 0, message: "Nginx process not found" };
+    }
+  }
+
+  // WireGuard
+  try {
+    const wgStart = Date.now();
+    const wgOut = execSync("wg show wg0 2>&1", { timeout: 3000 }).toString().trim();
+    const peerCount = (wgOut.match(/^peer:/gm) || []).length;
+    services.wireguard = {
+      status: "running",
+      latency: Date.now() - wgStart,
+      message: `Interface wg0 active, ${peerCount} peer(s)`,
+      peers: peerCount,
+    };
+  } catch {
+    services.wireguard = { status: "down", latency: 0, message: "WireGuard interface not available" };
+  }
+
+  // Node API (self-check)
+  services.api = {
+    status: "running",
+    latency: 0,
+    message: `API server on port ${PORT}`,
+    uptime: process.uptime(),
+  };
+
+  const allHealthy = Object.values(services).every((s) => s.status === "running");
+  res.json({ overall: allHealthy ? "healthy" : "degraded", services });
+});
+
 // ── Start server ────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {
