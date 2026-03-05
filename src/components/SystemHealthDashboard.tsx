@@ -20,6 +20,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { DDNSStatusWidget } from "@/components/DDNSStatusWidget";
 import { DockerHealthPanel } from "@/components/DockerHealthPanel";
 import { ServiceHealthPanel } from "@/components/ServiceHealthPanel";
+import { ContainerLogsViewer } from "@/components/admin/ContainerLogsViewer";
 
 interface HealthMetrics {
   database: {
