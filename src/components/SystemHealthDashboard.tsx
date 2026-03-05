@@ -334,6 +334,9 @@ export function SystemHealthDashboard() {
         </Card>
       </div>
 
+      {/* Internal Services Health */}
+      <ServiceHealthPanel />
+
       {/* Docker Container Health */}
       <DockerHealthPanel />
 
