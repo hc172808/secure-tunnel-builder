@@ -258,6 +258,13 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$ BEGIN
+    CREATE TRIGGER trg_pending_requests_updated_at
+        BEFORE UPDATE ON pending_peer_requests
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- ── Done ────────────────────────────────────────────────────
 -- Schema ready. The entrypoint.sh will seed initial server
 -- settings (keys, endpoint, DDNS) from environment variables.
