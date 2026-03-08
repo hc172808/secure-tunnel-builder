@@ -21,6 +21,7 @@ import { AdminNodeDomains } from "@/components/admin/AdminNodeDomains";
 import { DnsValidation } from "@/components/DnsValidation";
 import { SystemHealthDashboard } from "@/components/SystemHealthDashboard";
 import { AdminEmailNotifications } from "@/components/admin/AdminEmailNotifications";
+import { AdminBandwidthAlerts } from "@/components/admin/AdminBandwidthAlerts";
 
 export default function Admin() {
   const navigate = useNavigate();
