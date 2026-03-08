@@ -251,6 +251,33 @@ export default function Analytics() {
                 <SelectItem value="30d">30 Days</SelectItem>
               </SelectContent>
             </Select>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={collectTraffic}
+              disabled={collecting}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${collecting ? "animate-spin" : ""}`} />
+              {collecting ? "Collecting..." : "Collect Now"}
+            </Button>
+
+            <Button
+              variant={autoCollect ? "default" : "outline"}
+              size="sm"
+              onClick={() => setAutoCollect(!autoCollect)}
+              className="gap-2"
+            >
+              {autoCollect ? <Zap className="h-4 w-4" /> : <ZapOff className="h-4 w-4" />}
+              {autoCollect ? "Auto: ON" : "Auto: OFF"}
+            </Button>
+
+            {lastCollected && (
+              <Badge variant="secondary" className="text-xs">
+                Last: {lastCollected}
+              </Badge>
+            )}
           </div>
         </div>
       </header>
