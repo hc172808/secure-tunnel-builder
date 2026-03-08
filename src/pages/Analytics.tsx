@@ -67,6 +67,10 @@ export default function Analytics() {
   const [selectedPeer, setSelectedPeer] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("24h");
   const [loading, setLoading] = useState(true);
+  const [collecting, setCollecting] = useState(false);
+  const [autoCollect, setAutoCollect] = useState(false);
+  const [lastCollected, setLastCollected] = useState<string | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth");
