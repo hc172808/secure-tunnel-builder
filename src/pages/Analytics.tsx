@@ -1,11 +1,13 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, BarChart3, Download, ArrowUpDown, Clock, TrendingUp } from "lucide-react";
+import { ArrowLeft, BarChart3, Download, ArrowUpDown, Clock, TrendingUp, RefreshCw, Zap, ZapOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend, PieChart, Pie, Cell,
@@ -65,6 +67,10 @@ export default function Analytics() {
   const [selectedPeer, setSelectedPeer] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("24h");
   const [loading, setLoading] = useState(true);
+  const [collecting, setCollecting] = useState(false);
+  const [autoCollect, setAutoCollect] = useState(false);
+  const [lastCollected, setLastCollected] = useState<string | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth");
@@ -74,6 +80,38 @@ export default function Analytics() {
     if (!user) return;
     fetchData();
   }, [user, timeRange]);
+
+  // Auto-collect interval
+  useEffect(() => {
+    if (autoCollect && user) {
+      collectTraffic(); // collect immediately
+      intervalRef.current = setInterval(() => {
+        collectTraffic();
+      }, 60_000); // every 60 seconds
+    }
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [autoCollect, user]);
+
+  const collectTraffic = useCallback(async () => {
+    setCollecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("collect-traffic");
+      if (error) throw error;
+      setLastCollected(new Date().toLocaleTimeString());
+      // Refresh data after collection
+      await fetchData();
+    } catch (e: any) {
+      console.error("Traffic collection failed:", e);
+      toast.error("Failed to collect traffic data");
+    } finally {
+      setCollecting(false);
+    }
+  }, [timeRange]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -213,6 +251,33 @@ export default function Analytics() {
                 <SelectItem value="30d">30 Days</SelectItem>
               </SelectContent>
             </Select>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={collectTraffic}
+              disabled={collecting}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${collecting ? "animate-spin" : ""}`} />
+              {collecting ? "Collecting..." : "Collect Now"}
+            </Button>
+
+            <Button
+              variant={autoCollect ? "default" : "outline"}
+              size="sm"
+              onClick={() => setAutoCollect(!autoCollect)}
+              className="gap-2"
+            >
+              {autoCollect ? <Zap className="h-4 w-4" /> : <ZapOff className="h-4 w-4" />}
+              {autoCollect ? "Auto: ON" : "Auto: OFF"}
+            </Button>
+
+            {lastCollected && (
+              <Badge variant="secondary" className="text-xs">
+                Last: {lastCollected}
+              </Badge>
+            )}
           </div>
         </div>
       </header>
