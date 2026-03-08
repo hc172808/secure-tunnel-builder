@@ -196,6 +196,10 @@ export default function Admin() {
             <AdminEmailNotifications />
           </TabsContent>
 
+          <TabsContent value="bandwidth-alerts">
+            <AdminBandwidthAlerts />
+          </TabsContent>
+
           <TabsContent value="settings">
             <AdminServerSettings />
           </TabsContent>
