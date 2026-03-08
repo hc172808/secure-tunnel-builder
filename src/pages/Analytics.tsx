@@ -81,6 +81,38 @@ export default function Analytics() {
     fetchData();
   }, [user, timeRange]);
 
+  // Auto-collect interval
+  useEffect(() => {
+    if (autoCollect && user) {
+      collectTraffic(); // collect immediately
+      intervalRef.current = setInterval(() => {
+        collectTraffic();
+      }, 60_000); // every 60 seconds
+    }
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [autoCollect, user]);
+
+  const collectTraffic = useCallback(async () => {
+    setCollecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("collect-traffic");
+      if (error) throw error;
+      setLastCollected(new Date().toLocaleTimeString());
+      // Refresh data after collection
+      await fetchData();
+    } catch (e: any) {
+      console.error("Traffic collection failed:", e);
+      toast.error("Failed to collect traffic data");
+    } finally {
+      setCollecting(false);
+    }
+  }, [timeRange]);
+
   const fetchData = async () => {
     setLoading(true);
     try {
