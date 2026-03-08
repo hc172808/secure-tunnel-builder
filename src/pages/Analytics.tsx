@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, BarChart3, Download, ArrowUpDown, Clock, TrendingUp } from "lucide-react";
+import { ArrowLeft, BarChart3, Download, ArrowUpDown, Clock, TrendingUp, RefreshCw, Zap, ZapOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
