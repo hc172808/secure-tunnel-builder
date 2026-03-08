@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network, Search, Activity, BellRing } from "lucide-react";
+import { Shield, Users, Settings, History, ChevronLeft, Crown, Link, Flame, Database, Terminal, Mail, Clock, Globe, Tags, Network, Search, Activity, BellRing, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
