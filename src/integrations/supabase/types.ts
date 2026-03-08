@@ -47,6 +47,98 @@ export type Database = {
         }
         Relationships: []
       }
+      bandwidth_alert_logs: {
+        Row: {
+          actual_bytes: number
+          alert_id: string
+          created_at: string
+          id: string
+          peer_id: string
+          peer_name: string
+          period_hours: number
+          threshold_bytes: number
+        }
+        Insert: {
+          actual_bytes: number
+          alert_id: string
+          created_at?: string
+          id?: string
+          peer_id: string
+          peer_name: string
+          period_hours: number
+          threshold_bytes: number
+        }
+        Update: {
+          actual_bytes?: number
+          alert_id?: string
+          created_at?: string
+          id?: string
+          peer_id?: string
+          peer_name?: string
+          period_hours?: number
+          threshold_bytes?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bandwidth_alert_logs_alert_id_fkey"
+            columns: ["alert_id"]
+            isOneToOne: false
+            referencedRelation: "bandwidth_alerts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bandwidth_alert_logs_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "wireguard_peers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bandwidth_alerts: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          enabled: boolean
+          id: string
+          last_triggered_at: string | null
+          peer_id: string
+          period_hours: number
+          threshold_bytes: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          last_triggered_at?: string | null
+          peer_id: string
+          period_hours?: number
+          threshold_bytes?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          enabled?: boolean
+          id?: string
+          last_triggered_at?: string | null
+          peer_id?: string
+          period_hours?: number
+          threshold_bytes?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bandwidth_alerts_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "wireguard_peers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_notification_logs: {
         Row: {
           created_at: string
