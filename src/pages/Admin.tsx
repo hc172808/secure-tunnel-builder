@@ -205,6 +205,10 @@ export default function Admin() {
             <AdminBandwidthAlerts />
           </TabsContent>
 
+          <TabsContent value="subscriptions">
+            <AdminSubscriptions />
+          </TabsContent>
+
           <TabsContent value="settings">
             <AdminServerSettings />
           </TabsContent>
