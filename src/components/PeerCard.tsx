@@ -2,6 +2,7 @@ import { Copy, MoreVertical, Trash2, Settings, Download, QrCode, Pencil } from "
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import { PeerGroupBadge } from "./PeerGroupBadge";
+import { PeerSparkline } from "./PeerSparkline";
 import {
   DropdownMenu,
   DropdownMenuContent,
