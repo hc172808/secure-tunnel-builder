@@ -141,6 +141,11 @@ export function PeerCard({ peer, onDelete, onEdit, onViewConfig, onViewQR, isAdm
         </div>
       </div>
 
+      {/* Sparkline */}
+      <div className="mt-3 px-1">
+        <PeerSparkline peerId={peer.id} />
+      </div>
+
       <div className="mt-4 pt-4 border-t border-border">
         <p className="text-xs text-muted-foreground mb-1">Public Key</p>
         <div className="flex items-center gap-2">
