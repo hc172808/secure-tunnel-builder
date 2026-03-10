@@ -2,6 +2,7 @@ import { Copy, MoreVertical, Trash2, Settings, Download, QrCode, Pencil } from "
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import { PeerGroupBadge } from "./PeerGroupBadge";
+import { PeerSparkline } from "./PeerSparkline";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -138,6 +139,11 @@ export function PeerCard({ peer, onDelete, onEdit, onViewConfig, onViewQR, isAdm
             {peer.transferTx || "0 B"}
           </p>
         </div>
+      </div>
+
+      {/* Sparkline */}
+      <div className="mt-3 px-1">
+        <PeerSparkline peerId={peer.id} />
       </div>
 
       <div className="mt-4 pt-4 border-t border-border">
