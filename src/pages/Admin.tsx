@@ -22,6 +22,7 @@ import { DnsValidation } from "@/components/DnsValidation";
 import { SystemHealthDashboard } from "@/components/SystemHealthDashboard";
 import { AdminEmailNotifications } from "@/components/admin/AdminEmailNotifications";
 import { AdminBandwidthAlerts } from "@/components/admin/AdminBandwidthAlerts";
+import { AdminSubscriptions } from "@/components/admin/AdminSubscriptions";
 
 export default function Admin() {
   const navigate = useNavigate();
