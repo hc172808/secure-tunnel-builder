@@ -135,6 +135,10 @@ export default function Admin() {
               <Gauge className="h-4 w-4" />
               <span className="hidden sm:inline">Bandwidth</span>
             </TabsTrigger>
+            <TabsTrigger value="subscriptions" className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4" />
+              <span className="hidden sm:inline">Subscriptions</span>
+            </TabsTrigger>
             <TabsTrigger value="settings" className="flex items-center gap-2">
               <Settings className="h-4 w-4" />
               <span className="hidden sm:inline">Settings</span>
