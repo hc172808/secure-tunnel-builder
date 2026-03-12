@@ -249,6 +249,7 @@ export default function Hotspot() {
                     <div className="flex items-center gap-1 text-sm text-muted-foreground mb-3">
                       <Clock className="h-3 w-3" /> {formatDuration(plan.duration_hours)}
                       {plan.max_peers && <span> • Max {plan.max_peers} peers</span>}
+                      <span> • {plan.speed_limit_mbps ? `${plan.speed_limit_mbps} Mbps` : "Unlimited"}</span>
                     </div>
                     <ul className="space-y-1">
                       {plan.features.map((f, i) => (
