@@ -51,7 +51,7 @@ export function AdminSubscriptions() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [walletAddress, setWalletAddress] = useState("");
-  const [newPlan, setNewPlan] = useState({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "" });
+  const [newPlan, setNewPlan] = useState({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720" });
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
