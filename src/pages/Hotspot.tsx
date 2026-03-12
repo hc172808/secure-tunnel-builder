@@ -208,13 +208,18 @@ export default function Hotspot() {
         )}
 
         {user && (
-          <div className="text-center">
-            <Badge variant="outline" className="text-sm">
-              Logged in as {user.email}
-            </Badge>
-            <Button variant="ghost" size="sm" className="ml-2" onClick={() => supabase.auth.signOut()}>
-              Sign Out
-            </Button>
+          <div className="space-y-6">
+            <div className="text-center">
+              <Badge variant="outline" className="text-sm">
+                Logged in as {user.email}
+              </Badge>
+              <Button variant="ghost" size="sm" className="ml-2" onClick={() => supabase.auth.signOut()}>
+                Sign Out
+              </Button>
+            </div>
+            <div className="max-w-lg mx-auto">
+              <PortalStatus userId={user.id} />
+            </div>
           </div>
         )}
 
