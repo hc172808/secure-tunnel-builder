@@ -81,11 +81,12 @@ export function AdminSubscriptions() {
       max_peers: newPlan.max_peers ? parseInt(newPlan.max_peers) : null,
       features,
       duration_hours: newPlan.duration_hours ? parseInt(newPlan.duration_hours) : 720,
+      speed_limit_mbps: newPlan.speed_limit_mbps ? parseInt(newPlan.speed_limit_mbps) : null,
     } as any);
     if (error) { toast.error("Failed to create plan"); return; }
     toast.success("Plan created");
     setCreateOpen(false);
-    setNewPlan({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720" });
+    setNewPlan({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720", speed_limit_mbps: "" });
     fetchAll();
   };
 
