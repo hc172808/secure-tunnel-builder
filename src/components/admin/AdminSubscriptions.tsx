@@ -80,7 +80,8 @@ export function AdminSubscriptions() {
       price_per_peer: parseFloat(newPlan.price_per_peer),
       max_peers: newPlan.max_peers ? parseInt(newPlan.max_peers) : null,
       features,
-    });
+      duration_hours: newPlan.duration_hours ? parseInt(newPlan.duration_hours) : 720,
+    } as any);
     if (error) { toast.error("Failed to create plan"); return; }
     toast.success("Plan created");
     setCreateOpen(false);
