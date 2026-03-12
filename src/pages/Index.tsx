@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { SubscriptionExpiryBanner } from "@/components/SubscriptionExpiryBanner";
 import { useNavigate } from "react-router-dom";
 import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog, Globe, TrendingUp, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
