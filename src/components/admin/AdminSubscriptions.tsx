@@ -171,6 +171,7 @@ export function AdminSubscriptions() {
                 <div><Label>Max Peers (optional)</Label><Input type="number" value={newPlan.max_peers} onChange={e => setNewPlan({ ...newPlan, max_peers: e.target.value })} /></div>
                 <div><Label>Features (comma-separated)</Label><Input value={newPlan.features} onChange={e => setNewPlan({ ...newPlan, features: e.target.value })} placeholder="VPN access, Priority support" /></div>
                 <div><Label>Duration (hours)</Label><Input type="number" value={newPlan.duration_hours} onChange={e => setNewPlan({ ...newPlan, duration_hours: e.target.value })} placeholder="720 = 30 days" /></div>
+                <div><Label>Speed Limit (Mbps, empty = unlimited)</Label><Input type="number" value={newPlan.speed_limit_mbps} onChange={e => setNewPlan({ ...newPlan, speed_limit_mbps: e.target.value })} placeholder="e.g. 10, 50, 100" /></div>
                 <Button onClick={handleCreatePlan} className="w-full">Create Plan</Button>
               </div>
             </DialogContent>
