@@ -62,6 +62,7 @@ export default function Hotspot() {
       ...p,
       price_per_peer: Number(p.price_per_peer),
       duration_hours: (p as any).duration_hours ?? null,
+      speed_limit_mbps: (p as any).speed_limit_mbps ?? null,
       features: (p.features as string[]) || [],
     })));
   };
