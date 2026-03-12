@@ -511,6 +511,7 @@ export type Database = {
           max_peers: number | null
           name: string
           price_per_peer: number
+          speed_limit_mbps: number | null
           updated_at: string
         }
         Insert: {
@@ -524,6 +525,7 @@ export type Database = {
           max_peers?: number | null
           name: string
           price_per_peer?: number
+          speed_limit_mbps?: number | null
           updated_at?: string
         }
         Update: {
@@ -537,6 +539,7 @@ export type Database = {
           max_peers?: number | null
           name?: string
           price_per_peer?: number
+          speed_limit_mbps?: number | null
           updated_at?: string
         }
         Relationships: []
