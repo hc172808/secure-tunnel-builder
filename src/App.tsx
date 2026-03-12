@@ -10,6 +10,7 @@ import Admin from "./pages/Admin";
 import Settings from "./pages/Settings";
 import Analytics from "./pages/Analytics";
 import Subscriptions from "./pages/Subscriptions";
+import Hotspot from "./pages/Hotspot";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
