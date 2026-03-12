@@ -85,7 +85,7 @@ export function AdminSubscriptions() {
     if (error) { toast.error("Failed to create plan"); return; }
     toast.success("Plan created");
     setCreateOpen(false);
-    setNewPlan({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "" });
+    setNewPlan({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720" });
     fetchAll();
   };
 
