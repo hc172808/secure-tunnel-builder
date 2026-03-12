@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { SubscriptionExpiryBanner } from "@/components/SubscriptionExpiryBanner";
 import { useNavigate } from "react-router-dom";
 import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog, Globe, TrendingUp, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -487,6 +488,7 @@ export default function Index() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
+        <SubscriptionExpiryBanner />
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8 animate-fade-in">
           <StatCard

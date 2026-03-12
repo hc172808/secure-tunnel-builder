@@ -504,6 +504,7 @@ export type Database = {
           created_at: string
           currency: string
           description: string | null
+          duration_hours: number | null
           features: Json | null
           id: string
           is_active: boolean
@@ -516,6 +517,7 @@ export type Database = {
           created_at?: string
           currency?: string
           description?: string | null
+          duration_hours?: number | null
           features?: Json | null
           id?: string
           is_active?: boolean
@@ -528,6 +530,7 @@ export type Database = {
           created_at?: string
           currency?: string
           description?: string | null
+          duration_hours?: number | null
           features?: Json | null
           id?: string
           is_active?: boolean
@@ -595,6 +598,7 @@ export type Database = {
         Row: {
           created_at: string
           expires_at: string | null
+          expiry_notified_at: string | null
           id: string
           peer_count: number
           plan_id: string | null
@@ -606,6 +610,7 @@ export type Database = {
         Insert: {
           created_at?: string
           expires_at?: string | null
+          expiry_notified_at?: string | null
           id?: string
           peer_count?: number
           plan_id?: string | null
@@ -617,6 +622,7 @@ export type Database = {
         Update: {
           created_at?: string
           expires_at?: string | null
+          expiry_notified_at?: string | null
           id?: string
           peer_count?: number
           plan_id?: string | null
