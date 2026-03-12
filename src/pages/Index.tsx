@@ -488,6 +488,7 @@ export default function Index() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
+        <SubscriptionExpiryBanner />
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8 animate-fade-in">
           <StatCard

@@ -97,6 +97,8 @@ export default function Subscriptions() {
     if (!selectedPlan || !user) return;
 
     const amount = selectedPlan.price_per_peer * peerCount;
+    const durationHours = (selectedPlan as any).duration_hours || 720;
+    const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
 
     // Create subscription
     const { data: sub, error: subError } = await supabase
@@ -107,6 +109,7 @@ export default function Subscriptions() {
         peer_count: peerCount,
         total_amount: amount,
         status: "pending",
+        expires_at: expiresAt,
       })
       .select()
       .single();
