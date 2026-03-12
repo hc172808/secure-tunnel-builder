@@ -20,6 +20,7 @@ interface Plan {
   currency: string;
   max_peers: number | null;
   duration_hours: number | null;
+  speed_limit_mbps: number | null;
   features: string[];
   is_active: boolean;
 }
