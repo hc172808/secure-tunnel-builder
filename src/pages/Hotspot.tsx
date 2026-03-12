@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import QRCode from "qrcode";
+import { PortalStatus } from "@/components/hotspot/PortalStatus";
 
 interface Plan {
   id: string;
@@ -19,6 +20,7 @@ interface Plan {
   currency: string;
   max_peers: number | null;
   duration_hours: number | null;
+  speed_limit_mbps: number | null;
   features: string[];
   is_active: boolean;
 }
@@ -60,6 +62,7 @@ export default function Hotspot() {
       ...p,
       price_per_peer: Number(p.price_per_peer),
       duration_hours: (p as any).duration_hours ?? null,
+      speed_limit_mbps: (p as any).speed_limit_mbps ?? null,
       features: (p.features as string[]) || [],
     })));
   };
@@ -207,13 +210,18 @@ export default function Hotspot() {
         )}
 
         {user && (
-          <div className="text-center">
-            <Badge variant="outline" className="text-sm">
-              Logged in as {user.email}
-            </Badge>
-            <Button variant="ghost" size="sm" className="ml-2" onClick={() => supabase.auth.signOut()}>
-              Sign Out
-            </Button>
+          <div className="space-y-6">
+            <div className="text-center">
+              <Badge variant="outline" className="text-sm">
+                Logged in as {user.email}
+              </Badge>
+              <Button variant="ghost" size="sm" className="ml-2" onClick={() => supabase.auth.signOut()}>
+                Sign Out
+              </Button>
+            </div>
+            <div className="max-w-lg mx-auto">
+              <PortalStatus userId={user.id} />
+            </div>
           </div>
         )}
 
@@ -241,6 +249,7 @@ export default function Hotspot() {
                     <div className="flex items-center gap-1 text-sm text-muted-foreground mb-3">
                       <Clock className="h-3 w-3" /> {formatDuration(plan.duration_hours)}
                       {plan.max_peers && <span> • Max {plan.max_peers} peers</span>}
+                      <span> • {plan.speed_limit_mbps ? `${plan.speed_limit_mbps} Mbps` : "Unlimited"}</span>
                     </div>
                     <ul className="space-y-1">
                       {plan.features.map((f, i) => (
