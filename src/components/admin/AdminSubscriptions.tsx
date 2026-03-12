@@ -184,7 +184,7 @@ export function AdminSubscriptions() {
                 <div key={plan.id} className="flex items-center justify-between p-3 rounded-lg border border-border">
                   <div>
                     <p className="font-medium text-foreground">{plan.name}</p>
-                    <p className="text-sm text-muted-foreground">{plan.price_per_peer} GYD/peer{plan.max_peers ? ` • Max ${plan.max_peers}` : ""}</p>
+                    <p className="text-sm text-muted-foreground">{plan.price_per_peer} GYD/peer{plan.max_peers ? ` • Max ${plan.max_peers}` : ""} • {(plan as any).duration_hours || 720}h</p>
                   </div>
                   <Button variant="ghost" size="icon" onClick={() => handleDeletePlan(plan.id)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
