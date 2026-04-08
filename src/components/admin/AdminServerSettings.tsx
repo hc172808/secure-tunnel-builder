@@ -87,7 +87,26 @@ export function AdminServerSettings() {
     interface_address: "Interface Address",
     dns_servers: "DNS Servers",
     signup_enabled: "Allow New User Signups",
+    free_trial_speed_mbps: "Free Trial Speed Limit (Mbps)",
   };
+
+  const ensureFreeTrialSetting = async () => {
+    const exists = settings.find(s => s.setting_key === "free_trial_speed_mbps");
+    if (!exists) {
+      await supabase.from("server_settings").insert({
+        setting_key: "free_trial_speed_mbps",
+        setting_value: "1",
+        description: "Default speed limit in Mbps for users without an active subscription (free trial)",
+      });
+      fetchSettings();
+    }
+  };
+
+  useEffect(() => {
+    if (!loading && settings.length > 0) {
+      ensureFreeTrialSetting();
+    }
+  }, [loading, settings.length]);
 
   const toggleSignup = async () => {
     const currentValue = editedValues["signup_enabled"] === "true";
