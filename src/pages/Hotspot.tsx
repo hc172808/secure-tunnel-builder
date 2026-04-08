@@ -43,6 +43,8 @@ export default function Hotspot() {
   const [paymentDialog, setPaymentDialog] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [pendingPayment, setPendingPayment] = useState<{ subscriptionId: string; amount: number } | null>(null);
+  const [txHash, setTxHash] = useState("");
+  const [validating, setValidating] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setUser(data.session?.user || null));
@@ -358,13 +360,48 @@ export default function Hotspot() {
                 <code className="text-xs break-all text-foreground">{walletAddress}</code>
               </div>
               <div className="flex items-center gap-2 justify-center text-sm text-muted-foreground">
-                <Clock className="h-4 w-4" /> Awaiting admin confirmation
+                <Clock className="h-4 w-4" /> Awaiting confirmation
+              </div>
+              <div className="space-y-2">
+                <Label className="text-left block">Transaction Hash (optional)</Label>
+                <Input
+                  value={txHash}
+                  onChange={e => setTxHash(e.target.value)}
+                  placeholder="0x..."
+                  className="font-mono text-xs"
+                />
+                <Button
+                  onClick={async () => {
+                    if (!txHash || !pendingPayment) return;
+                    setValidating(true);
+                    try {
+                      const { data, error } = await supabase.functions.invoke("validate-gyd-payment", {
+                        body: { payment_id: pendingPayment.subscriptionId, tx_hash: txHash },
+                      });
+                      if (error) throw error;
+                      if (data?.validated) {
+                        toast.success("Payment verified on-chain!");
+                      } else {
+                        toast.info(data?.message || "Pending validation");
+                      }
+                    } catch {
+                      toast.error("Validation failed");
+                    }
+                    setValidating(false);
+                  }}
+                  disabled={!txHash || validating}
+                  variant="outline"
+                  className="w-full"
+                >
+                  {validating ? "Validating..." : "Verify Payment"}
+                </Button>
               </div>
               <Button
                 variant="outline"
                 onClick={() => {
                   setPendingPayment(null);
                   setQrDataUrl("");
+                  setTxHash("");
                   setPaymentDialog(false);
                 }}
               >

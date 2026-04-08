@@ -139,6 +139,42 @@ export type Database = {
           },
         ]
       }
+      bandwidth_rate_tiers: {
+        Row: {
+          created_at: string
+          currency: string
+          id: string
+          is_active: boolean
+          max_gb: number | null
+          min_gb: number
+          name: string
+          rate_per_gb: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          currency?: string
+          id?: string
+          is_active?: boolean
+          max_gb?: number | null
+          min_gb?: number
+          name: string
+          rate_per_gb?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          currency?: string
+          id?: string
+          is_active?: boolean
+          max_gb?: number | null
+          min_gb?: number
+          name?: string
+          rate_per_gb?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       crypto_payments: {
         Row: {
           amount: number
@@ -284,6 +320,51 @@ export type Database = {
         }
         Relationships: []
       }
+      gyd_validator_nodes: {
+        Row: {
+          api_key: string | null
+          created_at: string
+          created_by: string | null
+          endpoint_url: string
+          health_status: string
+          id: string
+          is_active: boolean
+          last_health_check: string | null
+          name: string
+          node_type: string
+          priority: number
+          updated_at: string
+        }
+        Insert: {
+          api_key?: string | null
+          created_at?: string
+          created_by?: string | null
+          endpoint_url: string
+          health_status?: string
+          id?: string
+          is_active?: boolean
+          last_health_check?: string | null
+          name: string
+          node_type?: string
+          priority?: number
+          updated_at?: string
+        }
+        Update: {
+          api_key?: string | null
+          created_at?: string
+          created_by?: string | null
+          endpoint_url?: string
+          health_status?: string
+          id?: string
+          is_active?: boolean
+          last_health_check?: string | null
+          name?: string
+          node_type?: string
+          priority?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       invitations: {
         Row: {
           created_at: string
@@ -313,6 +394,60 @@ export type Database = {
           used_at?: string | null
         }
         Relationships: []
+      }
+      payment_validation_logs: {
+        Row: {
+          block_number: number | null
+          confirmations: number | null
+          created_at: string
+          id: string
+          payment_id: string | null
+          response_data: Json | null
+          tx_hash: string | null
+          validated_at: string | null
+          validation_status: string
+          validator_node_id: string | null
+        }
+        Insert: {
+          block_number?: number | null
+          confirmations?: number | null
+          created_at?: string
+          id?: string
+          payment_id?: string | null
+          response_data?: Json | null
+          tx_hash?: string | null
+          validated_at?: string | null
+          validation_status?: string
+          validator_node_id?: string | null
+        }
+        Update: {
+          block_number?: number | null
+          confirmations?: number | null
+          created_at?: string
+          id?: string
+          payment_id?: string | null
+          response_data?: Json | null
+          tx_hash?: string | null
+          validated_at?: string | null
+          validation_status?: string
+          validator_node_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_validation_logs_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "crypto_payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_validation_logs_validator_node_id_fkey"
+            columns: ["validator_node_id"]
+            isOneToOne: false
+            referencedRelation: "gyd_validator_nodes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       peer_assignments: {
         Row: {
@@ -501,6 +636,7 @@ export type Database = {
       }
       subscription_plans: {
         Row: {
+          billing_type: string
           created_at: string
           currency: string
           description: string | null
@@ -515,6 +651,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          billing_type?: string
           created_at?: string
           currency?: string
           description?: string | null
@@ -529,6 +666,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          billing_type?: string
           created_at?: string
           currency?: string
           description?: string | null
@@ -569,6 +707,56 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "traffic_stats_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "wireguard_peers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      usage_billing_records: {
+        Row: {
+          amount_due: number
+          billing_period_end: string
+          billing_period_start: string
+          created_at: string
+          currency: string
+          id: string
+          peer_id: string | null
+          status: string
+          total_bytes: number
+          total_gb: number | null
+          user_id: string
+        }
+        Insert: {
+          amount_due?: number
+          billing_period_end: string
+          billing_period_start: string
+          created_at?: string
+          currency?: string
+          id?: string
+          peer_id?: string | null
+          status?: string
+          total_bytes?: number
+          total_gb?: number | null
+          user_id: string
+        }
+        Update: {
+          amount_due?: number
+          billing_period_end?: string
+          billing_period_start?: string
+          created_at?: string
+          currency?: string
+          id?: string
+          peer_id?: string | null
+          status?: string
+          total_bytes?: number
+          total_gb?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usage_billing_records_peer_id_fkey"
             columns: ["peer_id"]
             isOneToOne: false
             referencedRelation: "wireguard_peers"
