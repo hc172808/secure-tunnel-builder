@@ -23,6 +23,8 @@ import { SystemHealthDashboard } from "@/components/SystemHealthDashboard";
 import { AdminEmailNotifications } from "@/components/admin/AdminEmailNotifications";
 import { AdminBandwidthAlerts } from "@/components/admin/AdminBandwidthAlerts";
 import { AdminSubscriptions } from "@/components/admin/AdminSubscriptions";
+import { AdminValidatorNodes } from "@/components/admin/AdminValidatorNodes";
+import { AdminUsageBilling } from "@/components/admin/AdminUsageBilling";
 
 export default function Admin() {
   const navigate = useNavigate();
