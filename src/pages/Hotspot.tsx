@@ -34,9 +34,11 @@ export default function Hotspot() {
   const [username, setUsername] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [walletAddress, setWalletAddress] = useState("");
+  const [freeTrialSpeed, setFreeTrialSpeed] = useState(1);
 
   // Payment state
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [autoRenew, setAutoRenew] = useState(false);
   const [peerCount, setPeerCount] = useState(1);
   const [paymentDialog, setPaymentDialog] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState("");
@@ -49,8 +51,18 @@ export default function Hotspot() {
     });
     fetchPlans();
     fetchWallet();
+    fetchFreeTrialSpeed();
     return () => subscription.unsubscribe();
   }, []);
+
+  const fetchFreeTrialSpeed = async () => {
+    const { data } = await supabase
+      .from("server_settings")
+      .select("setting_value")
+      .eq("setting_key", "free_trial_speed_mbps")
+      .maybeSingle();
+    if (data?.setting_value) setFreeTrialSpeed(parseInt(data.setting_value) || 1);
+  };
 
   const fetchPlans = async () => {
     const { data } = await supabase
@@ -123,7 +135,8 @@ export default function Hotspot() {
         total_amount: amount,
         status: "pending",
         expires_at: expiresAt,
-      })
+        auto_renew: autoRenew,
+      } as any)
       .select()
       .single();
 
@@ -277,7 +290,7 @@ export default function Hotspot() {
               <Zap className="h-8 w-8 text-warning mx-auto mb-2" />
               <h3 className="font-semibold text-foreground mb-1">Free Trial</h3>
               <p className="text-sm text-muted-foreground">
-                Connect to the network for limited browsing. Upgrade to a paid plan for full speed, more peers, and VPN protection.
+                Connect with up to {freeTrialSpeed} Mbps for limited browsing. Upgrade to a paid plan for full speed, more peers, and VPN protection.
               </p>
             </CardContent>
           </Card>
@@ -318,6 +331,16 @@ export default function Hotspot() {
                 <p className="text-xs text-muted-foreground mt-1">
                   Valid for {formatDuration(selectedPlan?.duration_hours ?? null)}
                 </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="auto-renew"
+                  checked={autoRenew}
+                  onChange={(e) => setAutoRenew(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <Label htmlFor="auto-renew" className="text-sm">Auto-renew before expiry</Label>
               </div>
               <Button onClick={generatePaymentQR} className="w-full">
                 <QrCode className="mr-2 h-4 w-4" /> Generate Payment QR
