@@ -192,6 +192,111 @@ CREATE TABLE IF NOT EXISTS ddns_update_history (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Subscription plans
+CREATE TABLE IF NOT EXISTS subscription_plans (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    price_per_peer NUMERIC NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'GYD',
+    max_peers INTEGER,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    duration_hours INTEGER DEFAULT 720,
+    speed_limit_mbps INTEGER,
+    billing_type TEXT NOT NULL DEFAULT 'per_peer',
+    features JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- User subscriptions
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL,
+    plan_id UUID REFERENCES subscription_plans(id),
+    peer_count INTEGER NOT NULL DEFAULT 1,
+    total_amount NUMERIC NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ,
+    expiry_notified_at TIMESTAMPTZ,
+    auto_renew BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Crypto payments
+CREATE TABLE IF NOT EXISTS crypto_payments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL,
+    subscription_id UUID REFERENCES user_subscriptions(id),
+    amount NUMERIC NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'GYD',
+    wallet_address TEXT NOT NULL,
+    tx_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    confirmed_by UUID,
+    confirmed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Bandwidth rate tiers (usage-based billing)
+CREATE TABLE IF NOT EXISTS bandwidth_rate_tiers (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    min_gb NUMERIC NOT NULL DEFAULT 0,
+    max_gb NUMERIC,
+    rate_per_gb NUMERIC NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'GYD',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Usage billing records
+CREATE TABLE IF NOT EXISTS usage_billing_records (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID NOT NULL,
+    peer_id UUID REFERENCES wireguard_peers(id) ON DELETE SET NULL,
+    billing_period_start TIMESTAMPTZ NOT NULL,
+    billing_period_end TIMESTAMPTZ NOT NULL,
+    total_bytes BIGINT NOT NULL DEFAULT 0,
+    total_gb NUMERIC GENERATED ALWAYS AS (total_bytes::numeric / 1073741824.0) STORED,
+    amount_due NUMERIC NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'GYD',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- GYD validator nodes
+CREATE TABLE IF NOT EXISTS gyd_validator_nodes (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    node_type TEXT NOT NULL DEFAULT 'lite',
+    endpoint_url TEXT NOT NULL,
+    api_key TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    last_health_check TIMESTAMPTZ,
+    health_status TEXT NOT NULL DEFAULT 'unknown',
+    priority INTEGER NOT NULL DEFAULT 1,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Payment validation logs
+CREATE TABLE IF NOT EXISTS payment_validation_logs (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    payment_id UUID REFERENCES crypto_payments(id) ON DELETE CASCADE,
+    validator_node_id UUID REFERENCES gyd_validator_nodes(id) ON DELETE SET NULL,
+    validation_status TEXT NOT NULL DEFAULT 'pending',
+    tx_hash TEXT,
+    block_number BIGINT,
+    confirmations INTEGER DEFAULT 0,
+    response_data JSONB,
+    validated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── Indexes ─────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_peers_status ON wireguard_peers(status);
 CREATE INDEX IF NOT EXISTS idx_peers_group ON wireguard_peers(group_id);
