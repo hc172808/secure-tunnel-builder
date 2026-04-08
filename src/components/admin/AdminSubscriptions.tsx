@@ -51,7 +51,7 @@ export function AdminSubscriptions() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [walletAddress, setWalletAddress] = useState("");
-  const [newPlan, setNewPlan] = useState({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720", speed_limit_mbps: "" });
+  const [newPlan, setNewPlan] = useState({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720", speed_limit_mbps: "", billing_type: "per_peer" });
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
@@ -82,11 +82,12 @@ export function AdminSubscriptions() {
       features,
       duration_hours: newPlan.duration_hours ? parseInt(newPlan.duration_hours) : 720,
       speed_limit_mbps: newPlan.speed_limit_mbps ? parseInt(newPlan.speed_limit_mbps) : null,
+      billing_type: newPlan.billing_type,
     } as any);
     if (error) { toast.error("Failed to create plan"); return; }
     toast.success("Plan created");
     setCreateOpen(false);
-    setNewPlan({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720", speed_limit_mbps: "" });
+    setNewPlan({ name: "", description: "", price_per_peer: "0", max_peers: "", features: "", duration_hours: "720", speed_limit_mbps: "", billing_type: "per_peer" });
     fetchAll();
   };
 
@@ -172,6 +173,16 @@ export function AdminSubscriptions() {
                 <div><Label>Features (comma-separated)</Label><Input value={newPlan.features} onChange={e => setNewPlan({ ...newPlan, features: e.target.value })} placeholder="VPN access, Priority support" /></div>
                 <div><Label>Duration (hours)</Label><Input type="number" value={newPlan.duration_hours} onChange={e => setNewPlan({ ...newPlan, duration_hours: e.target.value })} placeholder="720 = 30 days" /></div>
                 <div><Label>Speed Limit (Mbps, empty = unlimited)</Label><Input type="number" value={newPlan.speed_limit_mbps} onChange={e => setNewPlan({ ...newPlan, speed_limit_mbps: e.target.value })} placeholder="e.g. 10, 50, 100" /></div>
+                <div>
+                  <Label>Billing Type</Label>
+                  <Select value={newPlan.billing_type} onValueChange={v => setNewPlan({ ...newPlan, billing_type: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="per_peer">Per Peer (flat rate)</SelectItem>
+                      <SelectItem value="usage_based">Usage Based (per GB consumed)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button onClick={handleCreatePlan} className="w-full">Create Plan</Button>
               </div>
             </DialogContent>
