@@ -30,6 +30,7 @@ interface Subscription {
   total_amount: number;
   status: string;
   expires_at: string | null;
+  auto_renew: boolean;
   created_at: string;
 }
 
@@ -75,7 +76,7 @@ export default function Subscriptions() {
       .select("*")
       .eq("user_id", user!.id)
       .order("created_at", { ascending: false });
-    if (data) setSubscriptions(data.map(s => ({ ...s, total_amount: Number(s.total_amount) })));
+    if (data) setSubscriptions(data.map(s => ({ ...s, total_amount: Number(s.total_amount), auto_renew: (s as any).auto_renew ?? false })));
   };
 
   const fetchWalletAddress = async () => {
@@ -231,9 +232,36 @@ export default function Subscriptions() {
                   <CardContent className="p-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-foreground">{sub.peer_count} peer(s)</p>
-                      <p className="text-sm text-muted-foreground">{sub.total_amount} GYD • {new Date(sub.created_at).toLocaleDateString()}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {sub.total_amount} GYD • {new Date(sub.created_at).toLocaleDateString()}
+                        {sub.auto_renew && " • Auto-renew"}
+                      </p>
+                      {sub.expires_at && (
+                        <p className="text-xs text-muted-foreground">
+                          Expires: {new Date(sub.expires_at).toLocaleString()}
+                        </p>
+                      )}
                     </div>
-                    <Badge variant={statusColor(sub.status) as any}>{sub.status}</Badge>
+                    <div className="flex items-center gap-2">
+                      {sub.status === "active" && (
+                        <button
+                          onClick={async () => {
+                            const newVal = !sub.auto_renew;
+                            await supabase.from("user_subscriptions").update({ auto_renew: newVal } as any).eq("id", sub.id);
+                            fetchSubscriptions();
+                            toast.success(newVal ? "Auto-renew enabled" : "Auto-renew disabled");
+                          }}
+                          className={`px-2 py-1 rounded text-xs font-medium ${
+                            sub.auto_renew
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {sub.auto_renew ? "Auto ✓" : "Auto ✗"}
+                        </button>
+                      )}
+                      <Badge variant={statusColor(sub.status) as any}>{sub.status}</Badge>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
