@@ -599,6 +599,7 @@ export type Database = {
       }
       user_subscriptions: {
         Row: {
+          auto_renew: boolean
           created_at: string
           expires_at: string | null
           expiry_notified_at: string | null
@@ -611,6 +612,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auto_renew?: boolean
           created_at?: string
           expires_at?: string | null
           expiry_notified_at?: string | null
@@ -623,6 +625,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auto_renew?: boolean
           created_at?: string
           expires_at?: string | null
           expiry_notified_at?: string | null
