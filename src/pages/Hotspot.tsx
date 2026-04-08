@@ -396,8 +396,12 @@ export default function Hotspot() {
                   {validating ? "Validating..." : "Verify Payment"}
                 </Button>
               </div>
+              <Button
+                variant="outline"
+                onClick={() => {
                   setPendingPayment(null);
                   setQrDataUrl("");
+                  setTxHash("");
                   setPaymentDialog(false);
                 }}
               >
