@@ -219,6 +219,14 @@ export default function Admin() {
             <AdminSubscriptions />
           </TabsContent>
 
+          <TabsContent value="usage-billing">
+            <AdminUsageBilling />
+          </TabsContent>
+
+          <TabsContent value="validators">
+            <AdminValidatorNodes />
+          </TabsContent>
+
           <TabsContent value="settings">
             <AdminServerSettings />
           </TabsContent>
