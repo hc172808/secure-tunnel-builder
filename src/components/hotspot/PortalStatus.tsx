@@ -13,6 +13,7 @@ interface Subscription {
   total_amount: number;
   expires_at: string | null;
   created_at: string;
+  auto_renew: boolean;
   plan: {
     name: string;
     speed_limit_mbps: number | null;
@@ -65,6 +66,7 @@ export function PortalStatus({ userId }: { userId: string }) {
       setSubscription({
         ...subRes.data,
         total_amount: Number(subRes.data.total_amount),
+        auto_renew: (subRes.data as any).auto_renew ?? false,
         plan: plan
           ? {
               name: plan.name,
@@ -165,7 +167,26 @@ export function PortalStatus({ userId }: { userId: string }) {
                 </div>
               )}
 
-              {/* Speed Limit */}
+              {/* Auto-Renew Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm text-foreground flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4 text-primary" /> Auto-Renew
+                </span>
+                <button
+                  onClick={async () => {
+                    const newVal = !subscription.auto_renew;
+                    await supabase.from("user_subscriptions").update({ auto_renew: newVal } as any).eq("id", subscription.id);
+                    setSubscription({ ...subscription, auto_renew: newVal });
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    subscription.auto_renew
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {subscription.auto_renew ? "On" : "Off"}
+                </button>
+              </div>
               <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
                 <Gauge className="h-4 w-4 text-primary" />
                 <span className="text-sm text-foreground">
