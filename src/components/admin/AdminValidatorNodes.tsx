@@ -94,27 +94,25 @@ export function AdminValidatorNodes() {
     fetchAll();
   };
 
-  const handleHealthCheck = async (node: ValidatorNode) => {
-    try {
-      const response = await fetch(node.endpoint_url, {
-        method: "GET",
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => null);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
 
-      const status = response?.ok ? "healthy" : "unhealthy";
-      await supabase.from("gyd_validator_nodes").update({
-        health_status: status,
-        last_health_check: new Date().toISOString(),
-      } as any).eq("id", node.id);
-      toast.success(`Health: ${status}`);
+  const handleHealthCheck = async (node: ValidatorNode) => {
+    setCheckingId(node.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("check-validator-health", {
+        body: { validator_id: node.id },
+      });
+      if (error) throw error;
+      if (data?.health_status === "healthy") {
+        toast.success(`Healthy • Block #${data.block_number} • ${data.latency_ms}ms`);
+      } else {
+        toast.error(`Unhealthy: ${data?.error || "Unreachable"}`);
+      }
       fetchAll();
-    } catch {
-      await supabase.from("gyd_validator_nodes").update({
-        health_status: "unhealthy",
-        last_health_check: new Date().toISOString(),
-      } as any).eq("id", node.id);
-      toast.error("Node unreachable");
-      fetchAll();
+    } catch (err: any) {
+      toast.error(`Health check failed: ${err.message}`);
+    } finally {
+      setCheckingId(null);
     }
   };
 
@@ -205,8 +203,8 @@ export function AdminValidatorNodes() {
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <Button size="icon" variant="ghost" onClick={() => handleHealthCheck(node)} title="Health check">
-                      <Activity className="h-4 w-4" />
+                    <Button size="icon" variant="ghost" onClick={() => handleHealthCheck(node)} disabled={checkingId === node.id} title="Health check">
+                      <Activity className={`h-4 w-4 ${checkingId === node.id ? "animate-pulse" : ""}`} />
                     </Button>
                     <Button size="icon" variant="ghost" onClick={() => handleToggle(node)}>
                       {node.is_active ? <span className="text-success text-xs font-bold">ON</span> : <span className="text-muted-foreground text-xs font-bold">OFF</span>}
