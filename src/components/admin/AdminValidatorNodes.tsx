@@ -203,8 +203,8 @@ export function AdminValidatorNodes() {
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <Button size="icon" variant="ghost" onClick={() => handleHealthCheck(node)} title="Health check">
-                      <Activity className="h-4 w-4" />
+                    <Button size="icon" variant="ghost" onClick={() => handleHealthCheck(node)} disabled={checkingId === node.id} title="Health check">
+                      <Activity className={`h-4 w-4 ${checkingId === node.id ? "animate-pulse" : ""}`} />
                     </Button>
                     <Button size="icon" variant="ghost" onClick={() => handleToggle(node)}>
                       {node.is_active ? <span className="text-success text-xs font-bold">ON</span> : <span className="text-muted-foreground text-xs font-bold">OFF</span>}
