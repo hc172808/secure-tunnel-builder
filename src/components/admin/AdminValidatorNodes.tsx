@@ -268,6 +268,9 @@ export function AdminValidatorNodes() {
           )}
         </CardContent>
       </Card>
+
+      {/* Health History */}
+      <ValidatorHealthHistory />
     </div>
   );
 }
