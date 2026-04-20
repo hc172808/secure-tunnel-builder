@@ -10,6 +10,7 @@ import { Plus, Trash2, RefreshCw, Server, Activity, Shield } from "lucide-react"
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import { ValidatorHealthHistory } from "./ValidatorHealthHistory";
 
 interface ValidatorNode {
   id: string;
@@ -267,6 +268,9 @@ export function AdminValidatorNodes() {
           )}
         </CardContent>
       </Card>
+
+      {/* Health History */}
+      <ValidatorHealthHistory />
     </div>
   );
 }

@@ -835,6 +835,44 @@ export type Database = {
           },
         ]
       }
+      validator_health_history: {
+        Row: {
+          block_number: number | null
+          checked_at: string
+          error_message: string | null
+          id: string
+          latency_ms: number | null
+          status: string
+          validator_node_id: string
+        }
+        Insert: {
+          block_number?: number | null
+          checked_at?: string
+          error_message?: string | null
+          id?: string
+          latency_ms?: number | null
+          status: string
+          validator_node_id: string
+        }
+        Update: {
+          block_number?: number | null
+          checked_at?: string
+          error_message?: string | null
+          id?: string
+          latency_ms?: number | null
+          status?: string
+          validator_node_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "validator_health_history_validator_node_id_fkey"
+            columns: ["validator_node_id"]
+            isOneToOne: false
+            referencedRelation: "gyd_validator_nodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wireguard_peers: {
         Row: {
           allowed_ips: string
