@@ -57,10 +57,19 @@ Deno.serve(async (req) => {
 
     const latencyMs = Date.now() - startedAt;
 
-    await supabase.from("gyd_validator_nodes").update({
-      health_status: healthStatus,
-      last_health_check: new Date().toISOString(),
-    }).eq("id", validator_id);
+    await Promise.all([
+      supabase.from("gyd_validator_nodes").update({
+        health_status: healthStatus,
+        last_health_check: new Date().toISOString(),
+      }).eq("id", validator_id),
+      supabase.from("validator_health_history").insert({
+        validator_node_id: validator_id,
+        status: healthStatus,
+        latency_ms: latencyMs,
+        block_number: blockNumber,
+        error_message: errorMsg,
+      }),
+    ]);
 
     return new Response(JSON.stringify({
       health_status: healthStatus,

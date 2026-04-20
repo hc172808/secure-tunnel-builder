@@ -28,6 +28,8 @@ Deno.serve(async (req) => {
     const results = await Promise.all(nodes.map(async (n: any) => {
       let status = "unhealthy";
       let block: number | null = null;
+      let errorMsg: string | null = null;
+      const startedAt = Date.now();
       try {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (n.api_key) headers["Authorization"] = `Bearer ${n.api_key}`;
@@ -39,14 +41,27 @@ Deno.serve(async (req) => {
         });
         const data = await res.json();
         if (data.result) { block = parseInt(data.result, 16); status = "healthy"; }
-      } catch (_) {}
+        else errorMsg = data.error?.message || "Invalid RPC response";
+      } catch (err: any) {
+        errorMsg = err.message || "Unreachable";
+      }
+      const latencyMs = Date.now() - startedAt;
 
-      await supabase.from("gyd_validator_nodes").update({
-        health_status: status,
-        last_health_check: new Date().toISOString(),
-      }).eq("id", n.id);
+      await Promise.all([
+        supabase.from("gyd_validator_nodes").update({
+          health_status: status,
+          last_health_check: new Date().toISOString(),
+        }).eq("id", n.id),
+        supabase.from("validator_health_history").insert({
+          validator_node_id: n.id,
+          status,
+          latency_ms: latencyMs,
+          block_number: block,
+          error_message: errorMsg,
+        }),
+      ]);
 
-      return { id: n.id, name: n.name, status, block };
+      return { id: n.id, name: n.name, status, block, latency_ms: latencyMs };
     }));
 
     return new Response(JSON.stringify({ checked: results.length, results }), {
