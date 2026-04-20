@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { SubscriptionExpiryBanner } from "@/components/SubscriptionExpiryBanner";
 import { useNavigate } from "react-router-dom";
-import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog, Globe, TrendingUp, CreditCard } from "lucide-react";
+import { Shield, Users, ArrowUpDown, Activity, RefreshCw, LogOut, Settings, BarChart3, Cog, Globe, TrendingUp, CreditCard, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { PeerCard } from "@/components/PeerCard";
@@ -469,6 +469,9 @@ export default function Index() {
               </Button>
               <Button variant="outline" size="icon" onClick={() => navigate("/subscriptions")} title="Subscriptions">
                 <CreditCard className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => navigate("/billing")} title="Billing History">
+                <Receipt className="h-4 w-4" />
               </Button>
               <Button variant="outline" size="icon" onClick={() => navigate("/settings")} title="Settings">
                 <Cog className="h-4 w-4" />
