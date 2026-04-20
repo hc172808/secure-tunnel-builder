@@ -51,7 +51,22 @@ export function AdminValidatorNodes() {
 
   useEffect(() => {
     fetchAll();
+    const interval = setInterval(fetchAll, 30000);
+    return () => clearInterval(interval);
   }, []);
+
+  const formatRelative = (iso: string | null) => {
+    if (!iso) return "never";
+    const diff = Date.now() - new Date(iso).getTime();
+    const s = Math.floor(diff / 1000);
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m} minute${m !== 1 ? "s" : ""} ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} hour${h !== 1 ? "s" : ""} ago`;
+    const d = Math.floor(h / 24);
+    return `${d} day${d !== 1 ? "s" : ""} ago`;
+  };
 
   const fetchAll = async () => {
     const [nodesRes, logsRes] = await Promise.all([
@@ -197,8 +212,7 @@ export function AdminValidatorNodes() {
                       </div>
                       <p className="text-xs text-muted-foreground truncate max-w-[250px]">{node.endpoint_url}</p>
                       <p className="text-xs text-muted-foreground">
-                        Priority: {node.priority}
-                        {node.last_health_check && ` • Last check: ${new Date(node.last_health_check).toLocaleString()}`}
+                        Priority: {node.priority} • Last check: {formatRelative(node.last_health_check)}
                       </p>
                     </div>
                   </div>
