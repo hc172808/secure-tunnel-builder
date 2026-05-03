@@ -26,6 +26,7 @@ Deno.serve(async (req) => {
     }
 
     const results = await Promise.all(nodes.map(async (n: any) => {
+      const previousStatus = n.health_status;
       let status = "unhealthy";
       let block: number | null = null;
       let errorMsg: string | null = null;
