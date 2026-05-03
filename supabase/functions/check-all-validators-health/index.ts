@@ -26,6 +26,7 @@ Deno.serve(async (req) => {
     }
 
     const results = await Promise.all(nodes.map(async (n: any) => {
+      const previousStatus = n.health_status;
       let status = "unhealthy";
       let block: number | null = null;
       let errorMsg: string | null = null;
@@ -61,7 +62,27 @@ Deno.serve(async (req) => {
         }),
       ]);
 
-      return { id: n.id, name: n.name, status, block, latency_ms: latencyMs };
+      // Notify admins on healthy -> unhealthy transition
+      if (previousStatus === "healthy" && status === "unhealthy") {
+        try {
+          await supabase.from("peer_notifications").insert({
+            peer_name: `Validator: ${n.name}`,
+            event_type: "validator_unhealthy",
+            read: false,
+          });
+          await supabase.functions.invoke("send-peer-notification", {
+            body: {
+              peer_name: `Validator: ${n.name}`,
+              event_type: "disconnected",
+              timestamp: new Date().toISOString(),
+            },
+          }).catch((e) => console.error("notify failed", e));
+        } catch (e) {
+          console.error("Transition notify error:", e);
+        }
+      }
+
+      return { id: n.id, name: n.name, status, block, latency_ms: latencyMs, transitioned: previousStatus === "healthy" && status === "unhealthy" };
     }));
 
     return new Response(JSON.stringify({ checked: results.length, results }), {
